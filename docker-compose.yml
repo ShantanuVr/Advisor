@@ -1,0 +1,64 @@
+# Docker Compose for Personal Advisor Portal with n8n Automation
+# Usage: docker-compose up -d
+
+version: "3.8"
+
+services:
+  # Personal Advisor Portal
+  advisor:
+    build: .
+    container_name: advisor-portal
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist data directory
+      - ./data:/app/data
+    environment:
+      - TIMEZONE=${TIMEZONE:-America/New_York}
+      - HOST=0.0.0.0
+      - PORT=8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - advisor-network
+
+  # n8n Workflow Automation
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n-automation
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    environment:
+      # Basic auth for n8n web interface
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-advisor123}
+      # Timezone
+      - GENERIC_TIMEZONE=${TIMEZONE:-America/New_York}
+      - TZ=${TIMEZONE:-America/New_York}
+      # Webhook URL for external access (optional)
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5678}
+      # Execution settings
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+    depends_on:
+      advisor:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - advisor-network
+
+volumes:
+  n8n_data:
+    driver: local
+
+networks:
+  advisor-network:
+    driver: bridge

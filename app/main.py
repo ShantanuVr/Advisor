@@ -29,10 +29,11 @@ async def startup_event():
 
 
 # Import and include routers
-from app.routes import home, symbol, calendar, news, analyze
+from app.routes import home, symbol, calendar, news, analyze, api
 
 app.include_router(home.router)
 app.include_router(symbol.router)
 app.include_router(calendar.router)
 app.include_router(news.router)
 app.include_router(analyze.router)
+app.include_router(api.router)  # API endpoints for n8n automation
