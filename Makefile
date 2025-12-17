@@ -1,4 +1,27 @@
-.PHONY: setup setup-playwright run prepare clean migrate import-snapshots fetch-calendar fetch-news generate-prompt capture-screenshots capture-symbol docker-up docker-up-playwright
+.PHONY: setup setup-playwright run prepare clean migrate import-snapshots fetch-calendar fetch-news generate-prompt capture-screenshots capture-symbol docker-up docker-up-playwright analyze reanalyze watch
+
+# ========================================
+# ONE-COMMAND ANALYSIS (Main Entry Points)
+# ========================================
+
+# Full end-to-end analysis - THE MAIN COMMAND
+# Fetches data, captures screenshots, submits to ChatGPT, generates reports
+analyze:
+	@echo "🚀 Starting full analysis workflow..."
+	./venv/bin/python run.py analyze
+
+# Reanalyze - clears old data and runs fresh
+reanalyze:
+	@echo "🔄 Clearing old data and reanalyzing..."
+	./venv/bin/python run.py reanalyze
+
+# Watch for manual response file (fallback)
+watch:
+	./venv/bin/python run.py watch-responses
+
+# ========================================
+# SETUP
+# ========================================
 
 # Create virtual environment and install dependencies
 setup:

@@ -38,3 +38,7 @@ data/reports/*
 .coverage
 htmlcov/
 .pytest_cache/
+
+# ChatGPT session cookies (sensitive)
+data/.chatgpt_cookies.json
+.chatgpt_cookies.json
