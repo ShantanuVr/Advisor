@@ -10,9 +10,24 @@
             <h1 class="text-2xl font-bold text-gray-900">{{ symbol }}</h1>
             <p class="text-gray-500">{{ today.strftime('%A, %B %d, %Y') }}</p>
         </div>
-        <a href="/" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
-            ← Back to Overview
-        </a>
+        <div class="flex items-center gap-4">
+            <button id="refreshBtn" onclick="refreshSymbol('{{ symbol }}')" 
+                    class="inline-flex items-center px-3 py-1.5 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                <span id="refreshIcon">🔄</span>
+                <span id="refreshText" class="ml-1.5">Refresh</span>
+            </button>
+            <a href="/" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
+                ← Back to Overview
+            </a>
+        </div>
+    </div>
+
+    <!-- Refresh Progress (hidden by default) -->
+    <div id="refreshProgress" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div class="flex items-center gap-2">
+            <span class="animate-spin">⏳</span>
+            <span id="progressMessage" class="text-sm text-blue-800">Refreshing {{ symbol }} data...</span>
+        </div>
     </div>
 
     <!-- Trade Plan Card -->
@@ -234,4 +249,55 @@
         </div>
     </div>
 </div>
+
+<script>
+async function refreshSymbol(symbol) {
+    const btn = document.getElementById('refreshBtn');
+    const icon = document.getElementById('refreshIcon');
+    const text = document.getElementById('refreshText');
+    const progress = document.getElementById('refreshProgress');
+    const message = document.getElementById('progressMessage');
+
+    btn.disabled = true;
+    btn.classList.add('opacity-50', 'cursor-not-allowed');
+    icon.textContent = '⏳';
+    text.textContent = 'Refreshing...';
+    progress.classList.remove('hidden');
+
+    try {
+        // Step 1: Capture screenshots for this symbol
+        message.textContent = `Capturing ${symbol} charts...`;
+        try {
+            await fetch(`/api/capture-symbol?symbol=${symbol}`, { method: 'POST' });
+        } catch (e) {
+            // Playwright might not be installed, continue
+        }
+
+        // Step 2: Fetch calendar
+        message.textContent = 'Fetching calendar...';
+        await fetch('/api/fetch-calendar', { method: 'POST' });
+
+        // Step 3: Fetch news
+        message.textContent = 'Fetching news...';
+        await fetch('/api/fetch-news', { method: 'POST' });
+
+        // Step 4: Generate prompt
+        message.textContent = 'Generating analysis prompt...';
+        await fetch('/api/generate-prompt', { method: 'POST' });
+
+        // Success - reload page
+        message.textContent = 'Done! Reloading...';
+        await new Promise(r => setTimeout(r, 500));
+        window.location.reload();
+
+    } catch (err) {
+        alert('Refresh failed: ' + err.message);
+        progress.classList.add('hidden');
+        btn.disabled = false;
+        btn.classList.remove('opacity-50', 'cursor-not-allowed');
+        icon.textContent = '🔄';
+        text.textContent = 'Refresh';
+    }
+}
+</script>
 {% endblock %}

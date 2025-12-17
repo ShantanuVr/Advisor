@@ -10,9 +10,73 @@
             <h1 class="text-2xl font-bold text-gray-900">Daily Overview</h1>
             <p class="text-gray-500">{{ today.strftime('%A, %B %d, %Y') }}</p>
         </div>
-        <a href="/analyze" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
-            ⚡ Run Analysis
-        </a>
+        <div class="flex gap-3">
+            <button id="refreshBtn" onclick="refreshData()" 
+                    class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                <span id="refreshIcon">🔄</span>
+                <span id="refreshText" class="ml-2">Refresh Data</span>
+            </button>
+            <a href="/analyze" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
+                ⚡ Run Analysis
+            </a>
+        </div>
+    </div>
+
+    <!-- Refresh Progress (hidden by default) -->
+    <div id="refreshProgress" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div class="flex items-center justify-between mb-2">
+            <h3 class="text-sm font-medium text-blue-900">🔄 Refreshing Data...</h3>
+            <span id="progressPercent" class="text-sm text-blue-600">0%</span>
+        </div>
+        <div class="w-full bg-blue-200 rounded-full h-2 mb-3">
+            <div id="progressBar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <div id="progressSteps" class="space-y-1 text-sm text-blue-800">
+            <div id="step-screenshots" class="flex items-center gap-2">
+                <span class="step-icon">⏳</span> Capturing TradingView charts...
+            </div>
+            <div id="step-calendar" class="flex items-center gap-2">
+                <span class="step-icon">⏳</span> Fetching economic calendar...
+            </div>
+            <div id="step-news" class="flex items-center gap-2">
+                <span class="step-icon">⏳</span> Fetching Fed/FOMC news...
+            </div>
+            <div id="step-prompt" class="flex items-center gap-2">
+                <span class="step-icon">⏳</span> Generating analysis prompt...
+            </div>
+        </div>
+    </div>
+
+    <!-- Refresh Complete Message (hidden by default) -->
+    <div id="refreshComplete" class="hidden bg-green-50 border border-green-200 rounded-lg p-4">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <span class="text-green-600 text-xl">✅</span>
+                <div>
+                    <h3 class="text-sm font-medium text-green-900">Data Refreshed Successfully!</h3>
+                    <p id="refreshSummary" class="text-sm text-green-700"></p>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <a href="/analyze" class="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700">
+                    ⚡ Analyze Now
+                </a>
+                <button onclick="hideRefreshComplete()" class="text-green-600 hover:text-green-800">
+                    ✕
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Message (hidden by default) -->
+    <div id="refreshError" class="hidden bg-red-50 border border-red-200 rounded-lg p-4">
+        <div class="flex items-center gap-2">
+            <span class="text-red-600 text-xl">❌</span>
+            <div>
+                <h3 class="text-sm font-medium text-red-900">Refresh Failed</h3>
+                <p id="errorMessage" class="text-sm text-red-700"></p>
+            </div>
+        </div>
     </div>
 
     <!-- Workflow Status -->
@@ -146,4 +210,143 @@
     </div>
     {% endif %}
 </div>
+
+<script>
+let isRefreshing = false;
+
+async function refreshData() {
+    if (isRefreshing) return;
+    isRefreshing = true;
+
+    // UI updates
+    const btn = document.getElementById('refreshBtn');
+    const icon = document.getElementById('refreshIcon');
+    const text = document.getElementById('refreshText');
+    const progress = document.getElementById('refreshProgress');
+    const complete = document.getElementById('refreshComplete');
+    const error = document.getElementById('refreshError');
+    const progressBar = document.getElementById('progressBar');
+    const progressPercent = document.getElementById('progressPercent');
+
+    // Reset and show progress
+    btn.disabled = true;
+    btn.classList.add('opacity-50', 'cursor-not-allowed');
+    icon.textContent = '⏳';
+    text.textContent = 'Refreshing...';
+    progress.classList.remove('hidden');
+    complete.classList.add('hidden');
+    error.classList.add('hidden');
+
+    const steps = ['screenshots', 'calendar', 'news', 'prompt'];
+    let currentStep = 0;
+    let results = {};
+
+    function updateProgress(step, status, percent) {
+        const stepEl = document.getElementById(`step-${step}`);
+        const iconEl = stepEl.querySelector('.step-icon');
+        
+        if (status === 'running') {
+            iconEl.textContent = '⏳';
+            stepEl.classList.add('font-medium');
+        } else if (status === 'done') {
+            iconEl.textContent = '✅';
+            stepEl.classList.remove('font-medium');
+        } else if (status === 'error') {
+            iconEl.textContent = '❌';
+        } else if (status === 'skipped') {
+            iconEl.textContent = '⏭️';
+        }
+
+        progressBar.style.width = `${percent}%`;
+        progressPercent.textContent = `${percent}%`;
+    }
+
+    try {
+        // Step 1: Capture screenshots (optional - may fail if Playwright not installed)
+        updateProgress('screenshots', 'running', 5);
+        try {
+            const screenshotRes = await fetch('/api/capture-screenshots', { method: 'POST' });
+            if (screenshotRes.ok) {
+                const data = await screenshotRes.json();
+                results.screenshots = data.captured || 0;
+                updateProgress('screenshots', 'done', 25);
+            } else if (screenshotRes.status === 503) {
+                // Playwright not installed - skip
+                results.screenshots = 'skipped';
+                updateProgress('screenshots', 'skipped', 25);
+            }
+        } catch (e) {
+            results.screenshots = 'skipped';
+            updateProgress('screenshots', 'skipped', 25);
+        }
+
+        // Step 2: Fetch calendar
+        updateProgress('calendar', 'running', 30);
+        const calRes = await fetch('/api/fetch-calendar', { method: 'POST' });
+        if (calRes.ok) {
+            const data = await calRes.json();
+            results.calendar = data.fetched || 0;
+            updateProgress('calendar', 'done', 50);
+        } else {
+            throw new Error('Calendar fetch failed');
+        }
+
+        // Step 3: Fetch news
+        updateProgress('news', 'running', 55);
+        const newsRes = await fetch('/api/fetch-news', { method: 'POST' });
+        if (newsRes.ok) {
+            const data = await newsRes.json();
+            results.news = data.fetched || 0;
+            updateProgress('news', 'done', 75);
+        } else {
+            throw new Error('News fetch failed');
+        }
+
+        // Step 4: Generate prompt
+        updateProgress('prompt', 'running', 80);
+        const promptRes = await fetch('/api/generate-prompt', { method: 'POST' });
+        if (promptRes.ok) {
+            const data = await promptRes.json();
+            results.prompt = data.prompt_path;
+            updateProgress('prompt', 'done', 100);
+        } else {
+            throw new Error('Prompt generation failed');
+        }
+
+        // Success!
+        await new Promise(r => setTimeout(r, 500));
+        progress.classList.add('hidden');
+        complete.classList.remove('hidden');
+
+        // Build summary
+        let summary = [];
+        if (results.screenshots !== 'skipped') {
+            summary.push(`${results.screenshots} charts captured`);
+        }
+        summary.push(`${results.calendar} calendar events`);
+        summary.push(`${results.news} news items`);
+        document.getElementById('refreshSummary').textContent = summary.join(' • ');
+
+        // Refresh the page after a short delay to show updated data
+        setTimeout(() => {
+            window.location.reload();
+        }, 2000);
+
+    } catch (err) {
+        progress.classList.add('hidden');
+        error.classList.remove('hidden');
+        document.getElementById('errorMessage').textContent = err.message;
+    } finally {
+        btn.disabled = false;
+        btn.classList.remove('opacity-50', 'cursor-not-allowed');
+        icon.textContent = '🔄';
+        text.textContent = 'Refresh Data';
+        isRefreshing = false;
+    }
+}
+
+function hideRefreshComplete() {
+    document.getElementById('refreshComplete').classList.add('hidden');
+}
+</script>
 {% endblock %}
