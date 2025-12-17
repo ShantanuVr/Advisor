@@ -342,7 +342,7 @@ async def fetch_fed_rss_feeds() -> List[dict]:
 
 async def fetch_fomc_calendar() -> List[dict]:
     """
-    Fetch FOMC meeting dates and statements.
+    Fetch FOMC meeting dates and statements from current year.
     """
     news_items = []
     url = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
@@ -401,9 +401,190 @@ async def fetch_fomc_calendar() -> List[dict]:
     return news_items
 
 
-async def fetch_and_store_news(db: Session) -> dict:
+async def fetch_fomc_statements(years: List[int] = None) -> List[dict]:
+    """
+    Fetch FOMC statements and meeting materials from specified years.
+    This provides access to historical FOMC decisions.
+    
+    Source: https://www.federalreserve.gov/monetarypolicy/fomchistorical{year}.htm
+    """
+    if years is None:
+        current_year = datetime.now().year
+        years = [current_year, current_year - 1]  # Current and previous year
+    
+    news_items = []
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    }
+    
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        for year in years:
+            # Try different URL patterns for FOMC historical data
+            urls = [
+                f"https://www.federalreserve.gov/monetarypolicy/fomchistorical{year}.htm",
+                f"https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+            ]
+            
+            for url in urls:
+                try:
+                    response = await client.get(url, headers=headers, timeout=30.0)
+                    if response.status_code != 200:
+                        continue
+                    
+                    soup = BeautifulSoup(response.text, "lxml")
+                    
+                    # Find all links on the page
+                    all_links = soup.find_all("a", href=True)
+                    
+                    for link in all_links:
+                        href = link.get("href", "")
+                        text = link.get_text(strip=True)
+                        
+                        # Filter for FOMC-related documents
+                        if not href:
+                            continue
+                        
+                        # Match FOMC statement URLs
+                        # Format: /newsevents/pressreleases/monetary20251218a.htm
+                        # Or: /monetarypolicy/fomcprojtabl20251218.htm
+                        is_fomc_doc = any([
+                            "/monetary" in href and str(year) in href,
+                            "fomcprojtabl" in href,
+                            "statement" in text.lower(),
+                            "minutes" in text.lower(),
+                            "press conference" in text.lower(),
+                            "projection" in text.lower(),
+                            "implementation note" in text.lower(),
+                        ])
+                        
+                        if not is_fomc_doc:
+                            continue
+                        
+                        # Build full URL
+                        if not href.startswith("http"):
+                            href = f"https://www.federalreserve.gov{href}"
+                        
+                        # Skip PDFs for now (we want HTML statements)
+                        if href.endswith(".pdf"):
+                            continue
+                        
+                        # Extract date from URL
+                        date_match = re.search(r'(\d{4})(\d{2})(\d{2})', href)
+                        if date_match:
+                            try:
+                                pub_date = datetime(
+                                    int(date_match.group(1)),
+                                    int(date_match.group(2)),
+                                    int(date_match.group(3))
+                                )
+                            except ValueError:
+                                continue
+                        else:
+                            continue
+                        
+                        # Determine document type
+                        text_lower = text.lower()
+                        if "statement" in text_lower or "monetary" in href:
+                            doc_type = "Statement"
+                        elif "minutes" in text_lower:
+                            doc_type = "Minutes"
+                        elif "press conference" in text_lower or "presconf" in href:
+                            doc_type = "Press Conference"
+                        elif "projection" in text_lower or "projtabl" in href:
+                            doc_type = "Projections"
+                        elif "implementation" in text_lower:
+                            doc_type = "Implementation Note"
+                        else:
+                            doc_type = "Document"
+                        
+                        # Create title
+                        date_str = pub_date.strftime("%B %d, %Y")
+                        title = f"FOMC {doc_type} - {date_str}"
+                        
+                        news_items.append({
+                            "published_at": pub_date,
+                            "source": "Federal Reserve (FOMC)",
+                            "title": title,
+                            "url": href,
+                            "doc_type": doc_type,
+                        })
+                        
+                except Exception as e:
+                    print(f"Error fetching {url}: {e}")
+                    continue
+    
+    # Remove duplicates based on URL
+    seen_urls = set()
+    unique_items = []
+    for item in news_items:
+        if item["url"] not in seen_urls:
+            seen_urls.add(item["url"])
+            unique_items.append(item)
+    
+    # Sort by date descending
+    unique_items.sort(key=lambda x: x["published_at"], reverse=True)
+    
+    return unique_items
+
+
+async def fetch_fomc_statement_content(url: str) -> Optional[str]:
+    """
+    Fetch the actual content of an FOMC statement for analysis.
+    Returns the text content of the statement.
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers, timeout=30.0)
+            if response.status_code != 200:
+                return None
+            
+            soup = BeautifulSoup(response.text, "lxml")
+            
+            # Find the main content area
+            content_selectors = [
+                "div.col-xs-12.col-sm-8.col-md-8",
+                "div#article",
+                "article",
+                "div.content",
+                "main",
+            ]
+            
+            for selector in content_selectors:
+                content = soup.select_one(selector)
+                if content:
+                    # Remove script and style elements
+                    for elem in content.find_all(["script", "style", "nav", "footer"]):
+                        elem.decompose()
+                    
+                    text = content.get_text(separator="\n", strip=True)
+                    if len(text) > 200:  # Ensure we got meaningful content
+                        return text
+            
+            # Fallback to body text
+            body = soup.find("body")
+            if body:
+                for elem in body.find_all(["script", "style", "nav", "footer", "header"]):
+                    elem.decompose()
+                return body.get_text(separator="\n", strip=True)
+                
+    except Exception as e:
+        print(f"Error fetching statement content from {url}: {e}")
+    
+    return None
+
+
+async def fetch_and_store_news(db: Session, include_historical: bool = False) -> dict:
     """
     Fetch news from all Federal Reserve sources and store in database.
+    
+    Args:
+        db: Database session
+        include_historical: If True, fetch FOMC statements from previous months/years
     """
     results = {
         "fetched": 0,
@@ -436,6 +617,16 @@ async def fetch_and_store_news(db: Session) -> dict:
     except Exception as e:
         results["errors"].append(f"FOMC calendar: {e}")
     
+    # Fetch historical FOMC statements if requested
+    if include_historical:
+        try:
+            current_year = datetime.now().year
+            fomc_statements = await fetch_fomc_statements(years=[current_year, current_year - 1])
+            all_news.extend(fomc_statements)
+            print(f"  Fetched {len(fomc_statements)} FOMC statements from {current_year-1}-{current_year}")
+        except Exception as e:
+            results["errors"].append(f"FOMC statements: {e}")
+    
     # Remove duplicates
     seen_urls = set()
     unique_news = []
@@ -446,8 +637,11 @@ async def fetch_and_store_news(db: Session) -> dict:
     
     results["fetched"] = len(unique_news)
     
-    # Filter to relevant items from last 7 days (Fed releases are less frequent)
-    cutoff = datetime.utcnow() - timedelta(days=7)
+    # For historical mode, don't filter by date
+    if include_historical:
+        cutoff = datetime.utcnow() - timedelta(days=365)  # Last year
+    else:
+        cutoff = datetime.utcnow() - timedelta(days=7)
     
     for item in unique_news:
         pub_at = item["published_at"]
@@ -479,6 +673,79 @@ async def fetch_and_store_news(db: Session) -> dict:
         results["inserted"] += 1
     
     db.commit()
+    return results
+
+
+async def fetch_and_store_fomc_history(db: Session, years: List[int] = None) -> dict:
+    """
+    Fetch and store historical FOMC statements specifically.
+    
+    Args:
+        db: Database session
+        years: List of years to fetch (default: current and previous year)
+    """
+    results = {
+        "fetched": 0,
+        "inserted": 0,
+        "skipped": 0,
+        "statements": [],
+        "errors": [],
+    }
+    
+    if years is None:
+        current_year = datetime.now().year
+        years = [current_year, current_year - 1]
+    
+    try:
+        fomc_statements = await fetch_fomc_statements(years=years)
+        results["fetched"] = len(fomc_statements)
+        
+        for item in fomc_statements:
+            pub_at = item["published_at"]
+            if pub_at.tzinfo is not None:
+                pub_at = pub_at.replace(tzinfo=None)
+            
+            # Check if already exists
+            existing = db.query(NewsItem).filter(NewsItem.url == item["url"]).first()
+            if existing:
+                results["skipped"] += 1
+                continue
+            
+            # Classify stance based on title
+            stance, confidence = classify_stance(item["title"])
+            
+            # For statements, try to fetch and analyze the content
+            doc_type = item.get("doc_type", "Document")
+            if doc_type == "Statement":
+                content = await fetch_fomc_statement_content(item["url"])
+                if content:
+                    # Classify based on full content
+                    stance, confidence = classify_stance(content)
+                    # Boost confidence for full content analysis
+                    confidence = min(95, confidence + 10)
+            
+            news_item = NewsItem(
+                published_at=pub_at,
+                source=item["source"],
+                title=item["title"],
+                url=item["url"],
+                stance=stance,
+                confidence=confidence,
+            )
+            db.add(news_item)
+            results["inserted"] += 1
+            results["statements"].append({
+                "date": pub_at.strftime("%Y-%m-%d"),
+                "title": item["title"],
+                "stance": stance,
+                "confidence": confidence,
+            })
+        
+        db.commit()
+        
+    except Exception as e:
+        results["errors"].append(str(e))
+    
     return results
 
 

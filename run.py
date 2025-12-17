@@ -115,7 +115,8 @@ def fetch_calendar_cmd():
 
 
 @cli.command('fetch-news')
-def fetch_news_cmd():
+@click.option('--historical', is_flag=True, help='Include historical FOMC statements')
+def fetch_news_cmd(historical):
     """Fetch Fed/FOMC related news."""
     from app.database import SessionLocal
     from app.agents.news_collector import fetch_and_store_news
@@ -123,12 +124,52 @@ def fetch_news_cmd():
     db = SessionLocal()
     try:
         click.echo("📰 Fetching news...")
-        results = asyncio.run(fetch_and_store_news(db))
+        if historical:
+            click.echo("   Including historical FOMC statements...")
+        results = asyncio.run(fetch_and_store_news(db, include_historical=historical))
         click.echo(f"Fetched: {results['fetched']}")
         click.echo(f"Inserted: {results['inserted']}")
         click.echo(f"Skipped (duplicates): {results['skipped']}")
         if results['errors']:
             click.echo("Errors:")
+            for err in results['errors']:
+                click.echo(f"  - {err}")
+    finally:
+        db.close()
+
+
+@cli.command('fetch-fomc')
+@click.option('--years', '-y', multiple=True, type=int, help='Years to fetch (default: current and previous)')
+def fetch_fomc_cmd(years):
+    """Fetch historical FOMC statements and meeting materials."""
+    from app.database import SessionLocal
+    from app.agents.news_collector import fetch_and_store_fomc_history
+    
+    db = SessionLocal()
+    try:
+        years_list = list(years) if years else None
+        if years_list:
+            click.echo(f"📜 Fetching FOMC statements for years: {', '.join(map(str, years_list))}")
+        else:
+            current_year = date.today().year
+            click.echo(f"📜 Fetching FOMC statements for {current_year-1}-{current_year}...")
+        
+        results = asyncio.run(fetch_and_store_fomc_history(db, years=years_list))
+        
+        click.echo(f"\nFetched: {results['fetched']}")
+        click.echo(f"Inserted: {results['inserted']}")
+        click.echo(f"Skipped (duplicates): {results['skipped']}")
+        
+        if results['statements']:
+            click.echo("\n📋 FOMC Statements Found:")
+            for stmt in results['statements'][:10]:  # Show first 10
+                stance_emoji = {"hawkish": "🔴", "dovish": "🟢", "neutral": "⚪"}.get(stmt['stance'], "⚪")
+                click.echo(f"  {stmt['date']}: {stance_emoji} {stmt['title']} ({stmt['confidence']}%)")
+            if len(results['statements']) > 10:
+                click.echo(f"  ... and {len(results['statements']) - 10} more")
+        
+        if results['errors']:
+            click.echo("\nErrors:")
             for err in results['errors']:
                 click.echo(f"  - {err}")
     finally:

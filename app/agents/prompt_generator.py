@@ -10,7 +10,7 @@ from app.models import Snapshot, EconomicEvent, NewsItem
 from app.config import PROMPTS_DIR, SYMBOLS, TIMEFRAMES, SCREENSHOTS_DIR
 from app.agents.snapshot_collector import get_snapshots_for_date
 from app.agents.fundamental import get_todays_events, get_danger_windows
-from app.agents.news_collector import get_recent_news
+from app.agents.news_collector import get_recent_news, get_fomc_related_news, get_all_recent_news
 
 
 def generate_prompt(db: Session, target_date: date = None) -> str:
@@ -106,8 +106,27 @@ def generate_prompt(db: Session, target_date: date = None) -> str:
             lines.append(f"- {start} - {end} UTC: {window['event'].title}")
         lines.append("")
     
-    # News section
-    lines.append("## Recent Fed/FOMC News (Last 48h)")
+    # FOMC Statements section (recent meetings)
+    fomc_news = get_fomc_related_news(db, days=60)  # Last 2 months of FOMC
+    if fomc_news:
+        lines.append("## Recent FOMC Statements & Meetings")
+        lines.append("")
+        lines.append("| Date | Document | Stance |")
+        lines.append("|------|----------|--------|")
+        seen_dates = set()
+        for item in fomc_news[:15]:  # Last 15 FOMC items
+            date_str = item.published_at.strftime("%Y-%m-%d")
+            # Dedupe by date+title combo
+            key = f"{date_str}-{item.title[:30]}"
+            if key in seen_dates:
+                continue
+            seen_dates.add(key)
+            stance_emoji = {"hawkish": "🔴", "dovish": "🟢", "neutral": "⚪"}.get(item.stance, "⚪")
+            lines.append(f"| {date_str} | [{item.title}]({item.url}) | {stance_emoji} {item.stance or 'neutral'} ({item.confidence or 0}%) |")
+        lines.append("")
+    
+    # Recent news section
+    lines.append("## Recent Fed News (Last 48h)")
     lines.append("")
     
     if news:
