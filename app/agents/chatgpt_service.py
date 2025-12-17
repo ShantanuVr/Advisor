@@ -147,18 +147,30 @@ async def submit_prompt(page, prompt_text: str) -> bool:
         return False
 
 
-async def wait_for_response(page, timeout: int = 300) -> Optional[str]:
+async def wait_for_response(page, timeout: int = 0) -> Optional[str]:
     """
     Wait for ChatGPT to finish generating a response.
-    Returns the response text or None on timeout.
+    Returns the response text.
+    
+    Args:
+        page: Playwright page
+        timeout: Max wait time in seconds (0 = no timeout, wait indefinitely)
     """
-    logger.info(f"Waiting for response (timeout: {timeout}s)...")
+    if timeout > 0:
+        logger.info(f"Waiting for response (timeout: {timeout}s)...")
+    else:
+        logger.info("Waiting for response (no timeout - ChatGPT thinking mode)...")
     
     start_time = asyncio.get_event_loop().time()
     last_response = ""
     stable_count = 0
     
-    while asyncio.get_event_loop().time() - start_time < timeout:
+    while True:
+        # Check timeout if set
+        if timeout > 0 and asyncio.get_event_loop().time() - start_time > timeout:
+            logger.warning("Response timeout - returning partial response")
+            return last_response if last_response else None
+        
         try:
             # Check if still generating (stop button visible)
             stop_button = await page.query_selector('button[aria-label="Stop generating"]')
@@ -172,21 +184,25 @@ async def wait_for_response(page, timeout: int = 300) -> Optional[str]:
                 # Check if response is stable (not changing)
                 if latest_response == last_response and len(latest_response) > 50:
                     stable_count += 1
-                    if stable_count >= 3 and not stop_button:
+                    # Need more stable checks (5 instead of 3) to handle thinking pauses
+                    if stable_count >= 5 and not stop_button:
                         logger.info("Response complete")
                         return latest_response
                 else:
                     stable_count = 0
                     last_response = latest_response
+                    
+                    # Show progress every 30 seconds
+                    elapsed = int(asyncio.get_event_loop().time() - start_time)
+                    if elapsed > 0 and elapsed % 30 == 0:
+                        preview = latest_response[:100].replace('\n', ' ')
+                        logger.info(f"Still generating ({elapsed}s)... {preview}...")
             
             await asyncio.sleep(2)
             
         except Exception as e:
             logger.warning(f"Error checking response: {e}")
             await asyncio.sleep(2)
-    
-    logger.warning("Response timeout - returning partial response")
-    return last_response if last_response else None
 
 
 def extract_json_from_response(response_text: str) -> Optional[dict]:
@@ -231,7 +247,7 @@ async def analyze_with_chatgpt(
     prompt_text: str,
     screenshot_paths: List[str],
     headless: bool = False,
-    timeout: int = 300
+    timeout: int = 0
 ) -> Tuple[bool, Optional[dict], Optional[str]]:
     """
     Full automation flow: login, upload images, submit prompt, get response.
@@ -240,7 +256,7 @@ async def analyze_with_chatgpt(
         prompt_text: The analysis prompt to submit
         screenshot_paths: List of paths to screenshot images
         headless: Run browser in headless mode (False recommended for first run)
-        timeout: Max time to wait for response in seconds
+        timeout: Max time to wait for response (0 = no timeout for thinking mode)
         
     Returns:
         Tuple of (success, parsed_json, raw_response)

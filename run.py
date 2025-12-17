@@ -421,7 +421,7 @@ def analyze_cmd(headless, auto_open, skip_screenshots, manual, symbol):
                             prompt_text=prompt_text,
                             screenshot_paths=symbol_screenshots[:6],  # Max 6 per symbol
                             headless=headless,
-                            timeout=300
+                            timeout=0  # No timeout - ChatGPT thinking mode can take time
                         )
                     )
                     
