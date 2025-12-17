@@ -117,9 +117,75 @@ def archive_response(response_file: Path) -> Optional[str]:
         return None
 
 
+def process_symbol_response(symbol: str, data: dict) -> bool:
+    """
+    Process analysis response for a single symbol.
+    
+    Args:
+        symbol: The symbol (e.g., "XAUUSD")
+        data: Parsed JSON response data for this symbol
+        
+    Returns:
+        True if processing succeeded
+    """
+    from app.database import SessionLocal
+    from app.agents.report_composer import compose_report
+    from app.models import TASignal
+    
+    logger.info(f"Processing {symbol} response...")
+    
+    db = SessionLocal()
+    today = date.today()
+    
+    try:
+        symbol = symbol.upper()
+        
+        # Delete existing signal for today
+        db.query(TASignal).filter(
+            TASignal.date == today,
+            TASignal.symbol == symbol,
+            TASignal.timeframe.is_(None)
+        ).delete()
+        
+        # Create new signal from response
+        ta_signal = TASignal(
+            date=today,
+            symbol=symbol,
+            timeframe=None,  # Aggregate signal
+            bias=data.get("bias", "neutral"),
+            confidence=data.get("confidence", 50),
+            levels_json=data.get("levels"),
+            ict_notes=data.get("ict_notes"),
+            turtle_soup_json=data.get("turtle_soup"),
+        )
+        db.add(ta_signal)
+        db.commit()
+        
+        logger.info(f"Stored signal for {symbol}: {data.get('bias')} ({data.get('confidence')}%)")
+        
+        # Generate report for this symbol
+        try:
+            report = compose_report(db, today, symbol)
+            if report:
+                logger.info(f"Generated report for {symbol}")
+            else:
+                logger.warning(f"Could not generate report for {symbol}")
+        except Exception as e:
+            logger.error(f"Error generating report for {symbol}: {e}")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to process {symbol} response: {e}")
+        return False
+    finally:
+        db.close()
+
+
 def process_response_data(data: dict) -> bool:
     """
     Process the response data and generate reports.
+    Handles both old multi-symbol format and new single-symbol format.
     
     Args:
         data: Parsed JSON response data
@@ -136,7 +202,12 @@ def process_response_data(data: dict) -> bool:
     logger.info("Processing response data...")
     
     try:
-        # Parse and validate the response
+        # Check if this is single-symbol format (new)
+        if "symbol" in data and "bias" in data:
+            symbol = data.get("symbol", "").upper()
+            return process_symbol_response(symbol, data)
+        
+        # Otherwise, parse as multi-symbol format (old)
         parsed = parse_cursor_response(json.dumps(data))
         signals = parsed.get("signals", {})
         

@@ -303,183 +303,213 @@ def capture_symbol_cmd(symbol, timeframes, headless):
 @click.option('--auto-open/--no-auto-open', default=True, help='Auto-open portal in browser')
 @click.option('--skip-screenshots', is_flag=True, help='Skip screenshot capture (use existing)')
 @click.option('--manual', is_flag=True, help='Skip ChatGPT automation, use file watcher')
-def analyze_cmd(headless, auto_open, skip_screenshots, manual):
+@click.option('--symbol', '-s', default=None, help='Analyze single symbol only')
+def analyze_cmd(headless, auto_open, skip_screenshots, manual, symbol):
     """
     Full end-to-end analysis workflow.
     
-    This command:
-    1. Clears old screenshots
-    2. Fetches calendar + news data
-    3. Captures fresh TradingView screenshots
-    4. Generates analysis prompt
-    5. Submits to ChatGPT (or watches for manual response)
-    6. Processes response and generates reports
-    7. Opens portal in browser
+    This command analyzes ONE SYMBOL AT A TIME (ChatGPT 10-file limit).
+    It will run analysis for each symbol sequentially:
+    
+    1. Fetches calendar + news data (once)
+    2. For each symbol:
+       - Captures 6 screenshots
+       - Generates symbol-specific prompt
+       - Submits to ChatGPT
+       - Processes response
+    3. Opens portal with all results
     
     Example: python run.py analyze
     """
     import webbrowser
+    import glob
     from datetime import datetime
     from app.database import SessionLocal
     from app.config import SYMBOLS, TIMEFRAMES, SCREENSHOTS_DIR, HOST, PORT
     
+    # Determine which symbols to analyze
+    symbols_to_analyze = [symbol.upper()] if symbol else SYMBOLS
+    
     click.echo("\n" + "="*60)
     click.echo("🚀 FULL ANALYSIS WORKFLOW")
+    click.echo(f"   Symbols: {', '.join(symbols_to_analyze)}")
+    click.echo(f"   Mode: {'Manual' if manual else 'ChatGPT Automation'}")
     click.echo("="*60 + "\n")
     
     db = SessionLocal()
+    all_responses = {}
     
     try:
-        # Step 1: Fetch calendar data
+        # Step 1: Fetch calendar data (once for all symbols)
         click.echo("📅 Step 1: Fetching economic calendar...")
         from app.agents.fundamental import fetch_and_store_calendar
         cal_results = asyncio.run(fetch_and_store_calendar(db))
         click.echo(f"   ✓ Fetched {cal_results['fetched']} events")
         
-        # Step 2: Fetch news data
+        # Step 2: Fetch news data (once for all symbols)
         click.echo("\n📰 Step 2: Fetching Fed/FOMC news...")
         from app.agents.news_collector import fetch_and_store_news
         news_results = asyncio.run(fetch_and_store_news(db))
         click.echo(f"   ✓ Fetched {news_results['fetched']} news items")
         
-        # Step 3: Capture screenshots (unless skipped)
-        screenshot_paths = []
-        if not skip_screenshots:
-            click.echo("\n📷 Step 3: Capturing TradingView screenshots...")
-            try:
-                from app.agents.screenshot_service import capture_all_charts
-                from app.agents.snapshot_collector import import_screenshots
-                
-                results = asyncio.run(capture_all_charts(
-                    symbols=SYMBOLS,
-                    timeframes=TIMEFRAMES,
-                    headless=True,  # Always headless for screenshots
-                    clear_old=True,
-                ))
-                
-                total = sum(len(paths) for paths in results.values())
-                click.echo(f"   ✓ Captured {total} screenshots")
-                
-                # Collect all paths
-                for symbol_paths in results.values():
-                    screenshot_paths.extend(symbol_paths)
-                
-                # Import to database
-                import_screenshots(db)
-                
-            except ImportError:
-                click.echo("   ⚠️  Playwright not installed, skipping screenshot capture")
-                click.echo("      Run: pip install playwright && playwright install chromium")
-        else:
-            click.echo("\n📷 Step 3: Using existing screenshots...")
-            # Get existing screenshots
-            import glob
-            for symbol in SYMBOLS:
-                pattern = str(SCREENSHOTS_DIR / f"{symbol}_*.png")
-                screenshot_paths.extend(glob.glob(pattern))
-            click.echo(f"   ✓ Found {len(screenshot_paths)} existing screenshots")
-        
-        # Step 4: Generate prompt
-        click.echo("\n📝 Step 4: Generating analysis prompt...")
-        from app.agents.prompt_generator import generate_prompt
-        prompt_path = generate_prompt(db)
-        click.echo(f"   ✓ Saved to: {prompt_path}")
-        
-        # Read prompt content
-        with open(prompt_path, "r") as f:
-            prompt_text = f.read()
-        
-        # Step 5: Submit to ChatGPT or watch for response
-        click.echo("\n🤖 Step 5: Getting AI analysis...")
-        
-        response_data = None
-        
-        if not manual:
-            # Try ChatGPT automation
-            try:
-                from app.agents.chatgpt_service import analyze_with_chatgpt
-                
-                click.echo("   Attempting ChatGPT automation...")
-                click.echo("   (Browser will open - please log in if prompted)")
-                
-                success, parsed_json, raw_response = asyncio.run(
-                    analyze_with_chatgpt(
-                        prompt_text=prompt_text,
-                        screenshot_paths=screenshot_paths[:12],  # Max 12 images
-                        headless=headless,
-                        timeout=300
-                    )
-                )
-                
-                if success and parsed_json:
-                    click.echo("   ✓ ChatGPT analysis complete!")
-                    response_data = parsed_json
-                else:
-                    click.echo("   ⚠️  ChatGPT automation incomplete")
-                    if raw_response:
-                        # Save raw response for manual processing
-                        from app.agents.response_watcher import save_response_for_processing
-                        from app.config import RESPONSES_DIR
-                        raw_file = RESPONSES_DIR / f"{date.today().isoformat()}_raw_response.txt"
-                        with open(raw_file, "w") as f:
-                            f.write(raw_response)
-                        click.echo(f"   Raw response saved to: {raw_file}")
+        # Step 3: Process each symbol
+        for idx, current_symbol in enumerate(symbols_to_analyze, 1):
+            click.echo("\n" + "-"*60)
+            click.echo(f"📊 ANALYZING {current_symbol} ({idx}/{len(symbols_to_analyze)})")
+            click.echo("-"*60)
+            
+            # 3a: Capture screenshots for this symbol
+            symbol_screenshots = []
+            if not skip_screenshots:
+                click.echo(f"\n   📷 Capturing {current_symbol} screenshots...")
+                try:
+                    from app.agents.screenshot_service import capture_charts_for_symbol
+                    from app.agents.snapshot_collector import import_screenshots
                     
-                    manual = True  # Fall back to manual mode
+                    paths = asyncio.run(capture_charts_for_symbol(
+                        symbol=current_symbol,
+                        timeframes=TIMEFRAMES,
+                        headless=True,
+                        clear_old=(idx == 1),  # Only clear on first symbol
+                    ))
                     
-            except ImportError:
-                click.echo("   ⚠️  ChatGPT service not available")
-                manual = True
-            except Exception as e:
-                click.echo(f"   ⚠️  ChatGPT automation failed: {e}")
-                manual = True
-        
-        if manual and not response_data:
-            # Use file watcher for manual response
-            click.echo("\n   Switching to manual mode...")
-            from app.agents.response_watcher import watch_for_response, get_response_file_path
-            
-            response_file = get_response_file_path()
-            click.echo(f"\n   📁 Save your ChatGPT response to:")
-            click.echo(f"      {response_file}")
-            click.echo(f"\n   The system will auto-detect and process it.")
-            
-            # Open the prompt file in default editor
-            click.echo(f"\n   Opening prompt file for reference...")
-            try:
-                import subprocess
-                import platform
-                if platform.system() == "Darwin":
-                    subprocess.run(["open", prompt_path])
-                elif platform.system() == "Windows":
-                    subprocess.run(["start", prompt_path], shell=True)
-                else:
-                    subprocess.run(["xdg-open", prompt_path])
-            except Exception:
-                pass
-            
-            # Watch for response file
-            response_data = watch_for_response(timeout=600)  # 10 minute timeout
-        
-        # Step 6: Process response
-        if response_data:
-            click.echo("\n📊 Step 6: Processing analysis results...")
-            from app.agents.response_watcher import process_response_data
-            
-            if process_response_data(response_data):
-                click.echo("   ✓ Reports generated successfully!")
+                    symbol_screenshots = paths
+                    click.echo(f"   ✓ Captured {len(paths)} screenshots")
+                    
+                    # Import to database
+                    import_screenshots(db)
+                    
+                except ImportError:
+                    click.echo("   ⚠️  Playwright not installed")
             else:
-                click.echo("   ⚠️  Some issues processing response")
-        else:
-            click.echo("\n⚠️  No response received - skipping report generation")
-        
-        # Step 7: Open portal
-        if auto_open:
-            click.echo("\n🌐 Step 7: Opening portal...")
-            url = f"http://{HOST}:{PORT}/"
+                click.echo(f"\n   📷 Using existing {current_symbol} screenshots...")
+                pattern = str(SCREENSHOTS_DIR / f"{current_symbol}_*.png")
+                symbol_screenshots = sorted(glob.glob(pattern))
+                click.echo(f"   ✓ Found {len(symbol_screenshots)} screenshots")
             
-            # Start the server in background if not running
-            click.echo(f"   Opening {url}")
+            # 3b: Generate symbol-specific prompt
+            click.echo(f"\n   📝 Generating {current_symbol} prompt...")
+            from app.agents.prompt_generator import generate_symbol_prompt
+            
+            # Include context only for first symbol
+            prompt_path = generate_symbol_prompt(
+                db, 
+                current_symbol, 
+                include_context=(idx == 1)
+            )
+            click.echo(f"   ✓ Saved to: {prompt_path}")
+            
+            # Read prompt content
+            with open(prompt_path, "r") as f:
+                prompt_text = f.read()
+            
+            # 3c: Get AI analysis for this symbol
+            click.echo(f"\n   🤖 Getting {current_symbol} analysis...")
+            
+            symbol_response = None
+            use_manual = manual
+            
+            if not use_manual:
+                try:
+                    from app.agents.chatgpt_service import analyze_with_chatgpt
+                    
+                    click.echo("      Submitting to ChatGPT...")
+                    click.echo(f"      (Uploading {len(symbol_screenshots)} images)")
+                    
+                    success, parsed_json, raw_response = asyncio.run(
+                        analyze_with_chatgpt(
+                            prompt_text=prompt_text,
+                            screenshot_paths=symbol_screenshots[:6],  # Max 6 per symbol
+                            headless=headless,
+                            timeout=300
+                        )
+                    )
+                    
+                    if success and parsed_json:
+                        click.echo(f"   ✓ {current_symbol} analysis complete!")
+                        symbol_response = parsed_json
+                        all_responses[current_symbol] = symbol_response
+                    else:
+                        click.echo("   ⚠️  ChatGPT automation incomplete")
+                        if raw_response:
+                            from app.config import RESPONSES_DIR
+                            raw_file = RESPONSES_DIR / f"{date.today().isoformat()}_{current_symbol}_raw.txt"
+                            with open(raw_file, "w") as f:
+                                f.write(raw_response)
+                            click.echo(f"      Raw response saved to: {raw_file}")
+                        use_manual = True
+                        
+                except ImportError:
+                    click.echo("   ⚠️  ChatGPT service not available")
+                    use_manual = True
+                except Exception as e:
+                    click.echo(f"   ⚠️  ChatGPT failed: {e}")
+                    use_manual = True
+            
+            if use_manual and not symbol_response:
+                # Manual mode for this symbol
+                click.echo(f"\n   📝 Manual mode for {current_symbol}...")
+                from app.agents.response_watcher import get_response_file_path
+                from app.config import RESPONSES_DIR
+                
+                # Use symbol-specific response file
+                response_file = RESPONSES_DIR / f"{current_symbol}_response.json"
+                click.echo(f"\n   📁 Save {current_symbol} response to:")
+                click.echo(f"      {response_file}")
+                click.echo(f"\n   Copy from ChatGPT and save, then press Enter...")
+                
+                # Open prompt for reference
+                try:
+                    import subprocess
+                    import platform
+                    if platform.system() == "Darwin":
+                        subprocess.run(["open", prompt_path])
+                except Exception:
+                    pass
+                
+                # Wait for user
+                input("   Press Enter when response is saved...")
+                
+                # Try to read the response
+                if response_file.exists():
+                    try:
+                        import json
+                        with open(response_file, "r") as f:
+                            symbol_response = json.load(f)
+                        click.echo(f"   ✓ Loaded {current_symbol} response")
+                        all_responses[current_symbol] = symbol_response
+                    except Exception as e:
+                        click.echo(f"   ⚠️  Error loading response: {e}")
+            
+            # 3d: Process this symbol's response
+            if symbol_response:
+                click.echo(f"\n   📊 Processing {current_symbol} results...")
+                from app.agents.response_watcher import process_symbol_response
+                
+                if process_symbol_response(current_symbol, symbol_response):
+                    click.echo(f"   ✓ {current_symbol} report generated!")
+                else:
+                    click.echo(f"   ⚠️  Issues processing {current_symbol}")
+        
+        # Step 4: Summary and open portal
+        click.echo("\n" + "="*60)
+        click.echo("📋 ANALYSIS SUMMARY")
+        click.echo("="*60)
+        
+        for sym in symbols_to_analyze:
+            if sym in all_responses:
+                resp = all_responses[sym]
+                bias = resp.get("bias", "unknown")
+                conf = resp.get("confidence", 0)
+                click.echo(f"   {sym}: {bias.upper()} ({conf}% confidence)")
+            else:
+                click.echo(f"   {sym}: ⚠️  No response")
+        
+        # Open portal
+        if auto_open:
+            click.echo(f"\n🌐 Opening portal...")
+            url = f"http://{HOST}:{PORT}/"
+            click.echo(f"   {url}")
             webbrowser.open(url)
         
         click.echo("\n" + "="*60)

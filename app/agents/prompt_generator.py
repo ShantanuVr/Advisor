@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,174 @@ from app.config import PROMPTS_DIR, SYMBOLS, TIMEFRAMES, SCREENSHOTS_DIR
 from app.agents.snapshot_collector import get_snapshots_for_date
 from app.agents.fundamental import get_todays_events, get_danger_windows
 from app.agents.news_collector import get_recent_news, get_fomc_related_news, get_all_recent_news
+
+
+def generate_symbol_prompt(
+    db: Session, 
+    symbol: str,
+    target_date: date = None,
+    include_context: bool = True
+) -> str:
+    """
+    Generate an analysis prompt for a single symbol.
+    Returns the path to the generated file.
+    
+    Args:
+        db: Database session
+        symbol: Symbol to analyze (e.g., "XAUUSD")
+        target_date: Date for analysis (default: today)
+        include_context: Include calendar/news context (set False for second symbol)
+    """
+    if target_date is None:
+        target_date = date.today()
+    
+    # Collect data
+    snapshots = get_snapshots_for_date(db, target_date)
+    
+    # Filter snapshots for this symbol only
+    symbol_snapshots = {
+        snap.timeframe: snap 
+        for snap in snapshots 
+        if snap.symbol.upper() == symbol.upper()
+    }
+    
+    # Build the prompt
+    lines = []
+    lines.append(f"# {symbol} Analysis Request - {target_date.isoformat()}")
+    lines.append("")
+    lines.append("## Instructions")
+    lines.append("")
+    lines.append(f"Please analyze the attached TradingView screenshots for **{symbol}** using ICT concepts and the Turtle Soup pattern.")
+    lines.append("Provide your analysis in the JSON format specified at the end of this document.")
+    lines.append("")
+    
+    # Screenshots section (single symbol - max 6 files)
+    lines.append("## Screenshots to Analyze")
+    lines.append("")
+    lines.append(f"### {symbol} (6 timeframes)")
+    
+    if not symbol_snapshots:
+        lines.append("- **No screenshots found** - please capture charts first")
+    else:
+        for tf in TIMEFRAMES:
+            if tf in symbol_snapshots:
+                snap = symbol_snapshots[tf]
+                abs_path = SCREENSHOTS_DIR / Path(snap.file_path).name
+                lines.append(f"- {tf}: `{abs_path}`")
+            else:
+                lines.append(f"- {tf}: **Missing**")
+    lines.append("")
+    
+    # Only include context for first symbol to save space
+    if include_context:
+        # Economic calendar section
+        events = get_todays_events(db, currencies=["USD", "EUR"])
+        danger_windows = get_danger_windows(db, target_date)
+        
+        lines.append("## Today's Economic Calendar (USD/EUR)")
+        lines.append("")
+        
+        if events:
+            high_impact = [e for e in events if e.impact == "high"]
+            
+            if high_impact:
+                lines.append("### High Impact Events ⚠️")
+                lines.append("")
+                lines.append("| Time (UTC) | Currency | Event | Forecast | Previous |")
+                lines.append("|------------|----------|-------|----------|----------|")
+                for event in high_impact:
+                    time_str = event.event_time_utc.strftime("%H:%M")
+                    lines.append(f"| {time_str} | {event.currency} | {event.title} | {event.forecast or '-'} | {event.previous or '-'} |")
+                lines.append("")
+        else:
+            lines.append("No high-impact USD/EUR events scheduled for today.")
+            lines.append("")
+        
+        # Danger windows
+        if danger_windows:
+            lines.append("### Danger Windows (±30 min around high-impact events)")
+            lines.append("")
+            for window in danger_windows:
+                start = window["start"].strftime("%H:%M")
+                end = window["end"].strftime("%H:%M")
+                lines.append(f"- {start} - {end} UTC: {window['event'].title}")
+            lines.append("")
+        
+        # Recent FOMC
+        fomc_news = get_fomc_related_news(db, days=60)
+        if fomc_news:
+            lines.append("## Recent FOMC Context")
+            lines.append("")
+            for item in fomc_news[:5]:  # Top 5 only
+                stance_emoji = {"hawkish": "🔴", "dovish": "🟢", "neutral": "⚪"}.get(item.stance, "⚪")
+                date_str = item.published_at.strftime("%Y-%m-%d")
+                lines.append(f"- {stance_emoji} {date_str}: {item.title}")
+            lines.append("")
+    
+    # Analysis framework (condensed)
+    lines.append("## Analysis Framework")
+    lines.append("")
+    lines.append("### ICT Concepts")
+    lines.append("- Liquidity Sweeps (stops taken above/below highs/lows)")
+    lines.append("- Market Structure Shift (MSS)")
+    lines.append("- Fair Value Gaps (FVG) & Order Blocks (OB)")
+    lines.append("- Premium/Discount zones")
+    lines.append("")
+    lines.append("### Turtle Soup Pattern")
+    lines.append("- Fake breakout → quick rejection → reversal entry")
+    lines.append("")
+    
+    # Output format (single symbol)
+    lines.append("## Required Output Format")
+    lines.append("")
+    lines.append("Please respond with ONLY valid JSON in this exact structure:")
+    lines.append("")
+    lines.append("```json")
+    lines.append(f"""{{
+  "symbol": "{symbol}",
+  "bias": "bullish | bearish | neutral",
+  "confidence": 75,
+  "levels": {{
+    "pdh": 0.00,
+    "pdl": 0.00,
+    "pwh": 0.00,
+    "pwl": 0.00,
+    "key_support": 0.00,
+    "key_resistance": 0.00
+  }},
+  "ict_notes": "Markdown notes about ICT analysis...",
+  "turtle_soup": {{
+    "detected": true,
+    "direction": "long | short | none",
+    "entry": 0.00,
+    "invalidation": 0.00,
+    "tp1": 0.00,
+    "tp2": 0.00,
+    "description": "Description of the setup..."
+  }},
+  "trade_plan": {{
+    "direction": "long | short | no_trade",
+    "entry_zone": {{"low": 0.00, "high": 0.00}},
+    "invalidation": 0.00,
+    "tp1": 0.00,
+    "tp2": 0.00,
+    "stand_down_if": ["condition1", "condition2"]
+  }},
+  "market_context": "Brief market sentiment"
+}}""")
+    lines.append("```")
+    lines.append("")
+    lines.append("---")
+    lines.append(f"*Generated at {datetime.now().isoformat()}*")
+    
+    # Write to file
+    prompt_content = "\n".join(lines)
+    prompt_path = PROMPTS_DIR / f"{target_date.isoformat()}_{symbol}_analysis.md"
+    
+    with open(prompt_path, "w") as f:
+        f.write(prompt_content)
+    
+    return str(prompt_path)
 
 
 def generate_prompt(db: Session, target_date: date = None) -> str:
