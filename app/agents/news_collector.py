@@ -1,4 +1,4 @@
-"""News collector - fetches Fed/FOMC related news."""
+"""News collector - fetches Fed/FOMC related news from official sources."""
 
 import re
 from datetime import datetime, timedelta
@@ -15,15 +15,22 @@ HAWKISH_KEYWORDS = [
     "rate hike", "raise rates", "raising rates", "tighten", "tightening",
     "inflation concern", "inflation worry", "hot inflation", "sticky inflation",
     "restrictive", "higher for longer", "more hikes", "additional hike",
-    "hawkish", "aggressive", "combat inflation"
+    "hawkish", "aggressive", "combat inflation", "price stability",
+    "elevated inflation", "upside risks"
 ]
 
 DOVISH_KEYWORDS = [
     "rate cut", "cutting rates", "lower rates", "easing", "pause",
     "soft landing", "cooling inflation", "disinflation", "slowing economy",
     "dovish", "accommodative", "support growth", "economic weakness",
-    "recession", "slowdown"
+    "recession", "slowdown", "downside risks", "labor market cooling"
 ]
+
+# Category keywords for Fed releases
+FOMC_KEYWORDS = ["fomc", "federal open market", "monetary policy", "interest rate", 
+                 "funds rate", "policy decision", "rate decision"]
+SPEECH_KEYWORDS = ["speech", "remarks", "testimony", "chair powell", "governor"]
+ECONOMIC_KEYWORDS = ["inflation", "employment", "gdp", "economic", "beige book"]
 
 
 def classify_stance(text: str) -> tuple:
@@ -50,141 +57,353 @@ def classify_stance(text: str) -> tuple:
         return ("neutral", 40)
 
 
-async def fetch_fed_official_news() -> List[dict]:
+def categorize_release(title: str) -> str:
+    """Categorize a Fed release by type."""
+    title_lower = title.lower()
+    
+    if any(kw in title_lower for kw in FOMC_KEYWORDS):
+        return "FOMC"
+    elif any(kw in title_lower for kw in SPEECH_KEYWORDS):
+        return "Speech"
+    elif any(kw in title_lower for kw in ECONOMIC_KEYWORDS):
+        return "Economic Data"
+    else:
+        return "Other"
+
+
+async def fetch_fed_press_releases(year: int = None) -> List[dict]:
     """
-    Fetch news from Federal Reserve official press releases.
+    Fetch press releases from Federal Reserve official website.
+    Source: https://www.federalreserve.gov/newsevents/pressreleases.htm
+    
+    The page uses server-side rendering, we parse the HTML directly.
     """
     news_items = []
-    url = "https://www.federalreserve.gov/newsevents/pressreleases.htm"
+    
+    if year is None:
+        year = datetime.now().year
+    
+    # Fetch the main press releases page and year-specific pages
+    urls = [
+        "https://www.federalreserve.gov/newsevents/pressreleases.htm",
+        f"https://www.federalreserve.gov/newsevents/pressreleases/{year}-all.htm",
+        f"https://www.federalreserve.gov/newsevents/pressreleases/{year}-monetary.htm",
+    ]
     
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
     }
     
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers, timeout=30.0)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, "lxml")
-            
-            # Find press release items
-            items = soup.select("div.row.ng-scope")[:20]  # Last 20 items
-            
-            for item in items:
-                try:
-                    # Get date
-                    date_elem = item.select_one("time")
-                    if not date_elem:
-                        continue
-                    date_str = date_elem.get("datetime", "")
-                    if date_str:
-                        pub_date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-                    else:
-                        continue
-                    
-                    # Get title and link
-                    link_elem = item.select_one("a")
-                    if not link_elem:
-                        continue
-                    
-                    title = link_elem.get_text(strip=True)
-                    href = link_elem.get("href", "")
-                    if href and not href.startswith("http"):
-                        href = f"https://www.federalreserve.gov{href}"
-                    
-                    # Filter for relevant content
-                    relevant_terms = ["fomc", "federal open market", "monetary policy", 
-                                    "interest rate", "inflation", "economic"]
-                    if not any(term in title.lower() for term in relevant_terms):
-                        continue
-                    
-                    news_items.append({
-                        "published_at": pub_date,
-                        "source": "Federal Reserve",
-                        "title": title,
-                        "url": href,
-                    })
-                    
-                except Exception:
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        for url in urls:
+            try:
+                response = await client.get(url, headers=headers, timeout=30.0)
+                if response.status_code != 200:
                     continue
-                    
-    except Exception as e:
-        print(f"Error fetching Fed news: {e}")
+                
+                soup = BeautifulSoup(response.text, "lxml")
+                
+                # Method 1: Look for press release list items
+                # Fed website typically uses div.row or similar for each release
+                items = soup.select("div.row")
+                
+                for item in items:
+                    try:
+                        # Look for date - Fed uses various formats
+                        date_elem = item.select_one("time") or item.select_one(".itemDate") or item.select_one("p.news-date")
+                        link_elem = item.select_one("a")
+                        
+                        if not link_elem:
+                            continue
+                        
+                        title = link_elem.get_text(strip=True)
+                        if not title or len(title) < 10:
+                            continue
+                        
+                        href = link_elem.get("href", "")
+                        if not href:
+                            continue
+                        if not href.startswith("http"):
+                            href = f"https://www.federalreserve.gov{href}"
+                        
+                        # Skip non-press-release links
+                        if "/pressreleases/" not in href and "/newsevents/" not in href:
+                            continue
+                        
+                        # Parse date
+                        pub_date = None
+                        if date_elem:
+                            date_str = date_elem.get("datetime") or date_elem.get_text(strip=True)
+                            pub_date = parse_fed_date(date_str)
+                        
+                        if not pub_date:
+                            # Try to extract date from URL (format: monetary20251217a.htm)
+                            date_match = re.search(r'(\d{4})(\d{2})(\d{2})', href)
+                            if date_match:
+                                try:
+                                    pub_date = datetime(
+                                        int(date_match.group(1)),
+                                        int(date_match.group(2)),
+                                        int(date_match.group(3))
+                                    )
+                                except ValueError:
+                                    pass
+                        
+                        if not pub_date:
+                            pub_date = datetime.now()
+                        
+                        # Categorize the release
+                        category = categorize_release(title)
+                        
+                        news_items.append({
+                            "published_at": pub_date,
+                            "source": f"Federal Reserve ({category})",
+                            "title": title,
+                            "url": href,
+                        })
+                        
+                    except Exception:
+                        continue
+                
+                # Method 2: Look for news-item divs
+                news_divs = soup.select("div.news-item, div.eventlist, .panel-body")
+                for item in news_divs:
+                    try:
+                        link_elem = item.select_one("a")
+                        if not link_elem:
+                            continue
+                        
+                        title = link_elem.get_text(strip=True)
+                        href = link_elem.get("href", "")
+                        
+                        if not title or not href or len(title) < 10:
+                            continue
+                        
+                        if not href.startswith("http"):
+                            href = f"https://www.federalreserve.gov{href}"
+                        
+                        # Extract date from surrounding text or URL
+                        pub_date = None
+                        date_text = item.get_text()
+                        date_patterns = [
+                            r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}",
+                            r"\d{1,2}/\d{1,2}/\d{4}",
+                        ]
+                        for pattern in date_patterns:
+                            match = re.search(pattern, date_text)
+                            if match:
+                                pub_date = parse_fed_date(match.group())
+                                break
+                        
+                        if not pub_date:
+                            date_match = re.search(r'(\d{4})(\d{2})(\d{2})', href)
+                            if date_match:
+                                try:
+                                    pub_date = datetime(
+                                        int(date_match.group(1)),
+                                        int(date_match.group(2)),
+                                        int(date_match.group(3))
+                                    )
+                                except ValueError:
+                                    pub_date = datetime.now()
+                        
+                        if not pub_date:
+                            pub_date = datetime.now()
+                        
+                        category = categorize_release(title)
+                        
+                        news_items.append({
+                            "published_at": pub_date,
+                            "source": f"Federal Reserve ({category})",
+                            "title": title,
+                            "url": href,
+                        })
+                        
+                    except Exception:
+                        continue
+                        
+            except Exception as e:
+                print(f"Error fetching {url}: {e}")
+                continue
+    
+    # Remove duplicates based on URL
+    seen_urls = set()
+    unique_items = []
+    for item in news_items:
+        if item["url"] not in seen_urls:
+            seen_urls.add(item["url"])
+            unique_items.append(item)
+    
+    return unique_items
+
+
+def parse_fed_date(date_str: str) -> Optional[datetime]:
+    """Parse various date formats used by the Fed."""
+    if not date_str:
+        return None
+    
+    date_str = date_str.strip()
+    
+    formats = [
+        "%B %d, %Y",      # December 17, 2025
+        "%B %d %Y",       # December 17 2025
+        "%b %d, %Y",      # Dec 17, 2025
+        "%m/%d/%Y",       # 12/17/2025
+        "%Y-%m-%d",       # 2025-12-17
+        "%Y-%m-%dT%H:%M:%S",  # ISO format
+    ]
+    
+    for fmt in formats:
+        try:
+            return datetime.strptime(date_str, fmt)
+        except ValueError:
+            continue
+    
+    # Try ISO format with timezone
+    try:
+        return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+    except ValueError:
+        pass
+    
+    return None
+
+
+async def fetch_fed_rss_feeds() -> List[dict]:
+    """
+    Fetch from Federal Reserve RSS feeds if available.
+    """
+    news_items = []
+    
+    # Fed RSS feed URLs (these may change)
+    rss_urls = [
+        "https://www.federalreserve.gov/feeds/press_all.xml",
+        "https://www.federalreserve.gov/feeds/press_monetary.xml",
+    ]
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    }
+    
+    async with httpx.AsyncClient() as client:
+        for url in rss_urls:
+            try:
+                response = await client.get(url, headers=headers, timeout=30.0)
+                if response.status_code != 200:
+                    continue
+                
+                soup = BeautifulSoup(response.text, "xml")
+                items = soup.find_all("item")[:30]
+                
+                for item in items:
+                    try:
+                        title_elem = item.find("title")
+                        link_elem = item.find("link")
+                        pub_date_elem = item.find("pubDate")
+                        
+                        if not title_elem or not link_elem:
+                            continue
+                        
+                        title = title_elem.get_text(strip=True)
+                        link = link_elem.get_text(strip=True)
+                        
+                        # Parse date
+                        pub_date = datetime.now()
+                        if pub_date_elem:
+                            try:
+                                date_str = pub_date_elem.get_text(strip=True)
+                                # RSS format: Wed, 18 Dec 2024 15:00:00 GMT
+                                pub_date = datetime.strptime(date_str, "%a, %d %b %Y %H:%M:%S %Z")
+                            except ValueError:
+                                try:
+                                    pub_date = datetime.strptime(date_str, "%a, %d %b %Y %H:%M:%S %z")
+                                except ValueError:
+                                    pass
+                        
+                        category = categorize_release(title)
+                        
+                        news_items.append({
+                            "published_at": pub_date,
+                            "source": f"Federal Reserve ({category})",
+                            "title": title,
+                            "url": link,
+                        })
+                        
+                    except Exception:
+                        continue
+                        
+            except Exception as e:
+                print(f"Error fetching RSS {url}: {e}")
+                continue
     
     return news_items
 
 
-async def fetch_reuters_fed_news() -> List[dict]:
+async def fetch_fomc_calendar() -> List[dict]:
     """
-    Fetch Fed-related news from Reuters RSS.
-    Note: Reuters may have changed their RSS structure.
+    Fetch FOMC meeting dates and statements.
     """
     news_items = []
-    
-    # Reuters business news RSS
-    url = "https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best"
+    url = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
     
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     }
     
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, headers=headers, timeout=30.0)
-            response.raise_for_status()
+            if response.status_code != 200:
+                return news_items
             
-            soup = BeautifulSoup(response.text, "xml")
+            soup = BeautifulSoup(response.text, "lxml")
             
-            items = soup.find_all("item")[:30]
-            
-            for item in items:
+            # Find all meeting rows
+            for row in soup.select("div.panel, div.fomc-meeting, tr"):
                 try:
-                    title = item.find("title")
-                    if not title:
-                        continue
-                    title_text = title.get_text(strip=True)
-                    
-                    # Filter for Fed-related content
-                    relevant_terms = ["fed", "fomc", "powell", "federal reserve", 
-                                    "interest rate", "monetary policy", "inflation"]
-                    if not any(term in title_text.lower() for term in relevant_terms):
-                        continue
-                    
-                    link = item.find("link")
-                    pub_date = item.find("pubDate")
-                    
-                    if pub_date:
-                        # Parse RSS date format
-                        try:
-                            date_str = pub_date.get_text(strip=True)
-                            pub_datetime = datetime.strptime(
-                                date_str, "%a, %d %b %Y %H:%M:%S %z"
-                            )
-                        except ValueError:
-                            pub_datetime = datetime.utcnow()
-                    else:
-                        pub_datetime = datetime.utcnow()
-                    
-                    news_items.append({
-                        "published_at": pub_datetime,
-                        "source": "Reuters",
-                        "title": title_text,
-                        "url": link.get_text(strip=True) if link else "",
-                    })
-                    
+                    # Look for links to statements or minutes
+                    links = row.select("a")
+                    for link in links:
+                        href = link.get("href", "")
+                        text = link.get_text(strip=True).lower()
+                        
+                        if "statement" in text or "minutes" in text or "press conference" in text:
+                            if not href.startswith("http"):
+                                href = f"https://www.federalreserve.gov{href}"
+                            
+                            # Try to extract date from URL
+                            date_match = re.search(r'(\d{4})(\d{2})(\d{2})', href)
+                            if date_match:
+                                pub_date = datetime(
+                                    int(date_match.group(1)),
+                                    int(date_match.group(2)),
+                                    int(date_match.group(3))
+                                )
+                            else:
+                                pub_date = datetime.now()
+                            
+                            title = f"FOMC {text.title()}"
+                            
+                            news_items.append({
+                                "published_at": pub_date,
+                                "source": "Federal Reserve (FOMC)",
+                                "title": title,
+                                "url": href,
+                            })
+                            
                 except Exception:
                     continue
                     
     except Exception as e:
-        print(f"Error fetching Reuters news: {e}")
+        print(f"Error fetching FOMC calendar: {e}")
     
     return news_items
 
 
 async def fetch_and_store_news(db: Session) -> dict:
     """
-    Fetch news from all configured sources and store in database.
+    Fetch news from all Federal Reserve sources and store in database.
     """
     results = {
         "fetched": 0,
@@ -193,32 +412,49 @@ async def fetch_and_store_news(db: Session) -> dict:
         "errors": [],
     }
     
-    # Collect from all sources
     all_news = []
     
+    # Fetch from multiple sources
     try:
-        fed_news = await fetch_fed_official_news()
-        all_news.extend(fed_news)
+        press_releases = await fetch_fed_press_releases()
+        all_news.extend(press_releases)
+        print(f"  Fetched {len(press_releases)} from press releases page")
     except Exception as e:
-        results["errors"].append(f"Fed official: {e}")
+        results["errors"].append(f"Press releases: {e}")
     
     try:
-        reuters_news = await fetch_reuters_fed_news()
-        all_news.extend(reuters_news)
+        rss_news = await fetch_fed_rss_feeds()
+        all_news.extend(rss_news)
+        print(f"  Fetched {len(rss_news)} from RSS feeds")
     except Exception as e:
-        results["errors"].append(f"Reuters: {e}")
+        results["errors"].append(f"RSS feeds: {e}")
     
-    results["fetched"] = len(all_news)
+    try:
+        fomc_news = await fetch_fomc_calendar()
+        all_news.extend(fomc_news)
+        print(f"  Fetched {len(fomc_news)} from FOMC calendar")
+    except Exception as e:
+        results["errors"].append(f"FOMC calendar: {e}")
     
-    # Filter to last 48 hours
-    cutoff = datetime.utcnow() - timedelta(hours=48)
-    
+    # Remove duplicates
+    seen_urls = set()
+    unique_news = []
     for item in all_news:
-        # Make datetime offset-naive for comparison
+        if item["url"] not in seen_urls:
+            seen_urls.add(item["url"])
+            unique_news.append(item)
+    
+    results["fetched"] = len(unique_news)
+    
+    # Filter to relevant items from last 7 days (Fed releases are less frequent)
+    cutoff = datetime.utcnow() - timedelta(days=7)
+    
+    for item in unique_news:
         pub_at = item["published_at"]
         if pub_at.tzinfo is not None:
             pub_at = pub_at.replace(tzinfo=None)
         
+        # Skip old items
         if pub_at < cutoff:
             continue
         
@@ -228,7 +464,7 @@ async def fetch_and_store_news(db: Session) -> dict:
             results["skipped"] += 1
             continue
         
-        # Classify stance
+        # Classify stance based on title
         stance, confidence = classify_stance(item["title"])
         
         news_item = NewsItem(
@@ -254,6 +490,14 @@ def get_recent_news(db: Session, hours: int = 48) -> List[NewsItem]:
     ).order_by(NewsItem.published_at.desc()).all()
 
 
+def get_all_recent_news(db: Session, days: int = 7) -> List[NewsItem]:
+    """Get all news items from the last N days."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    return db.query(NewsItem).filter(
+        NewsItem.published_at >= cutoff
+    ).order_by(NewsItem.published_at.desc()).all()
+
+
 def get_top_drivers(db: Session, limit: int = 3) -> List[NewsItem]:
     """Get top news drivers by confidence score."""
     cutoff = datetime.utcnow() - timedelta(hours=48)
@@ -261,3 +505,12 @@ def get_top_drivers(db: Session, limit: int = 3) -> List[NewsItem]:
         NewsItem.published_at >= cutoff,
         NewsItem.confidence.isnot(None)
     ).order_by(NewsItem.confidence.desc()).limit(limit).all()
+
+
+def get_fomc_related_news(db: Session, days: int = 7) -> List[NewsItem]:
+    """Get FOMC-specific news items."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    return db.query(NewsItem).filter(
+        NewsItem.published_at >= cutoff,
+        NewsItem.source.contains("FOMC")
+    ).order_by(NewsItem.published_at.desc()).all()
