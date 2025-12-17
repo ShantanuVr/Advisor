@@ -279,6 +279,107 @@ async def api_import_screenshots(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/capture-screenshots")
+async def api_capture_screenshots(
+    db: Session = Depends(get_db),
+    symbols: Optional[str] = None,
+    timeframes: Optional[str] = None,
+    headless: bool = True
+):
+    """
+    Capture TradingView screenshots automatically using Playwright.
+    
+    Args:
+        symbols: Comma-separated symbols (default: XAUUSD,EURUSD)
+        timeframes: Comma-separated timeframes (default: all)
+        headless: Run browser headless (default: true)
+    
+    Returns:
+        List of captured screenshot paths
+    """
+    try:
+        from app.agents.screenshot_service import capture_all_charts
+        from app.config import SYMBOLS, TIMEFRAMES
+        
+        symbol_list = symbols.split(",") if symbols else SYMBOLS
+        timeframe_list = timeframes.split(",") if timeframes else TIMEFRAMES
+        
+        results = await capture_all_charts(
+            symbols=symbol_list,
+            timeframes=timeframe_list,
+            headless=headless,
+        )
+        
+        total = sum(len(paths) for paths in results.values())
+        
+        # Import captured screenshots to database
+        import_results = import_screenshots(db)
+        
+        return JSONResponse(content={
+            "status": "success",
+            "timestamp": datetime.utcnow().isoformat(),
+            "captured": total,
+            "results": {symbol: len(paths) for symbol, paths in results.items()},
+            "imported": import_results["imported"]
+        })
+        
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail="Playwright not installed. Run: pip install playwright && playwright install chromium"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/capture-symbol")
+async def api_capture_symbol(
+    db: Session = Depends(get_db),
+    symbol: str = "XAUUSD",
+    timeframes: Optional[str] = None,
+    headless: bool = True
+):
+    """
+    Capture TradingView screenshots for a single symbol.
+    
+    Args:
+        symbol: Symbol to capture (e.g., XAUUSD)
+        timeframes: Comma-separated timeframes (default: all)
+        headless: Run browser headless (default: true)
+    """
+    try:
+        from app.agents.screenshot_service import capture_charts_for_symbol
+        from app.config import TIMEFRAMES
+        
+        timeframe_list = timeframes.split(",") if timeframes else TIMEFRAMES
+        
+        paths = await capture_charts_for_symbol(
+            symbol=symbol,
+            timeframes=timeframe_list,
+            headless=headless,
+        )
+        
+        # Import captured screenshots to database
+        import_results = import_screenshots(db)
+        
+        return JSONResponse(content={
+            "status": "success",
+            "timestamp": datetime.utcnow().isoformat(),
+            "symbol": symbol,
+            "captured": len(paths),
+            "paths": paths,
+            "imported": import_results["imported"]
+        })
+        
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Playwright not installed. Run: pip install playwright && playwright install chromium"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/health")
 async def api_health():
     """

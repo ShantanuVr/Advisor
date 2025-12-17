@@ -205,5 +205,98 @@ def init_db_cmd():
     click.echo("Done!")
 
 
+@cli.command('capture-screenshots')
+@click.option('--symbols', '-s', default=None, help='Comma-separated symbols (default: XAUUSD,EURUSD)')
+@click.option('--timeframes', '-t', default=None, help='Comma-separated timeframes (default: all)')
+@click.option('--headless/--no-headless', default=True, help='Run browser headless (default: true)')
+def capture_screenshots_cmd(symbols, timeframes, headless):
+    """Capture TradingView screenshots using Playwright.
+    
+    Requires: pip install playwright && playwright install chromium
+    """
+    try:
+        from app.agents.screenshot_service import capture_all_charts
+        from app.config import SYMBOLS, TIMEFRAMES
+    except ImportError as e:
+        click.echo("❌ Playwright not installed. Run:")
+        click.echo("   pip install playwright && playwright install chromium")
+        return
+    
+    from app.database import SessionLocal
+    from app.agents.snapshot_collector import import_screenshots
+    
+    symbol_list = symbols.split(",") if symbols else SYMBOLS
+    timeframe_list = timeframes.split(",") if timeframes else TIMEFRAMES
+    
+    click.echo(f"📷 Capturing TradingView charts...")
+    click.echo(f"   Symbols: {', '.join(symbol_list)}")
+    click.echo(f"   Timeframes: {', '.join(timeframe_list)}")
+    click.echo(f"   Headless: {headless}")
+    
+    results = asyncio.run(capture_all_charts(
+        symbols=symbol_list,
+        timeframes=timeframe_list,
+        headless=headless,
+    ))
+    
+    total = sum(len(paths) for paths in results.values())
+    click.echo(f"\n✅ Captured {total} screenshots:")
+    for symbol, paths in results.items():
+        click.echo(f"   {symbol}: {len(paths)} charts")
+    
+    # Import to database
+    db = SessionLocal()
+    try:
+        click.echo("\n📸 Importing to database...")
+        import_results = import_screenshots(db)
+        click.echo(f"   Imported: {import_results['imported']}")
+    finally:
+        db.close()
+
+
+@cli.command('capture-symbol')
+@click.argument('symbol', default='XAUUSD')
+@click.option('--timeframes', '-t', default=None, help='Comma-separated timeframes (default: all)')
+@click.option('--headless/--no-headless', default=True, help='Run browser headless')
+def capture_symbol_cmd(symbol, timeframes, headless):
+    """Capture TradingView screenshots for a single symbol.
+    
+    Example: python run.py capture-symbol XAUUSD --timeframes 1D,4H,1H
+    """
+    try:
+        from app.agents.screenshot_service import capture_charts_for_symbol
+        from app.config import TIMEFRAMES
+    except ImportError:
+        click.echo("❌ Playwright not installed. Run:")
+        click.echo("   pip install playwright && playwright install chromium")
+        return
+    
+    from app.database import SessionLocal
+    from app.agents.snapshot_collector import import_screenshots
+    
+    timeframe_list = timeframes.split(",") if timeframes else TIMEFRAMES
+    
+    click.echo(f"📷 Capturing {symbol} charts...")
+    click.echo(f"   Timeframes: {', '.join(timeframe_list)}")
+    
+    paths = asyncio.run(capture_charts_for_symbol(
+        symbol=symbol,
+        timeframes=timeframe_list,
+        headless=headless,
+    ))
+    
+    click.echo(f"\n✅ Captured {len(paths)} screenshots for {symbol}")
+    for path in paths:
+        click.echo(f"   {path}")
+    
+    # Import to database
+    db = SessionLocal()
+    try:
+        import_results = import_screenshots(db)
+        click.echo(f"\n📸 Imported: {import_results['imported']}")
+    finally:
+        db.close()
+
+
 if __name__ == '__main__':
     cli()

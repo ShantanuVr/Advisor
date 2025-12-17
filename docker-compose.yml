@@ -1,10 +1,14 @@
 # Docker Compose for Personal Advisor Portal with n8n Automation
 # Usage: docker-compose up -d
+#
+# For automated TradingView screenshots, use:
+#   docker-compose --profile playwright up -d
+# This uses Dockerfile.playwright with browser automation (larger image ~1.5GB)
 
 version: "3.8"
 
 services:
-  # Personal Advisor Portal
+  # Personal Advisor Portal (lightweight, no browser)
   advisor:
     build: .
     container_name: advisor-portal
@@ -23,6 +27,32 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    restart: unless-stopped
+    networks:
+      - advisor-network
+
+  # Personal Advisor Portal with Playwright (for automated screenshots)
+  advisor-playwright:
+    build:
+      context: .
+      dockerfile: Dockerfile.playwright
+    container_name: advisor-portal-playwright
+    profiles:
+      - playwright
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TIMEZONE=${TIMEZONE:-America/New_York}
+      - HOST=0.0.0.0
+      - PORT=8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
     networks:
       - advisor-network

@@ -1,4 +1,4 @@
-.PHONY: setup run prepare clean migrate import-snapshots fetch-calendar fetch-news generate-prompt
+.PHONY: setup setup-playwright run prepare clean migrate import-snapshots fetch-calendar fetch-news generate-prompt capture-screenshots capture-symbol docker-up docker-up-playwright
 
 # Create virtual environment and install dependencies
 setup:
@@ -52,3 +52,29 @@ reset:
 	rm -f data/advisor.db
 	./venv/bin/alembic upgrade head
 	@echo "Full reset complete"
+
+# Install Playwright for automated screenshots
+setup-playwright:
+	./venv/bin/pip install playwright
+	./venv/bin/playwright install chromium
+	@echo "Playwright setup complete!"
+
+# Capture TradingView screenshots (requires Playwright)
+capture-screenshots:
+	./venv/bin/python run.py capture-screenshots
+
+# Capture screenshots for a single symbol
+capture-symbol:
+	./venv/bin/python run.py capture-symbol $(SYMBOL)
+
+# Docker: Start lightweight stack (n8n + advisor)
+docker-up:
+	docker-compose up -d
+
+# Docker: Start with Playwright for automated screenshots
+docker-up-playwright:
+	docker-compose --profile playwright up -d
+
+# Docker: Stop all containers
+docker-down:
+	docker-compose down

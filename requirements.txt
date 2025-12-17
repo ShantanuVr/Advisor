@@ -27,3 +27,6 @@ python-dateutil==2.9.0
 
 # Image handling
 pillow==11.0.0
+
+# Browser automation for TradingView screenshots (optional)
+playwright==1.49.1
