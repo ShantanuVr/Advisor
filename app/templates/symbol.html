@@ -265,25 +265,25 @@ async function refreshSymbol(symbol) {
     progress.classList.remove('hidden');
 
     try {
-        // Step 1: Capture screenshots for this symbol
-        message.textContent = `Capturing ${symbol} charts...`;
+        // Step 1: Fetch calendar (fast)
+        message.textContent = 'Fetching calendar...';
+        await fetch('/api/fetch-calendar', { method: 'POST' });
+
+        // Step 2: Fetch news (fast)
+        message.textContent = 'Fetching news...';
+        await fetch('/api/fetch-news', { method: 'POST' });
+
+        // Step 3: Generate prompt (fast)
+        message.textContent = 'Generating analysis prompt...';
+        await fetch('/api/generate-prompt', { method: 'POST' });
+
+        // Step 4: Capture screenshots for this symbol (slow - clears old first)
+        message.textContent = `Capturing ${symbol} charts (clearing old)...`;
         try {
             await fetch(`/api/capture-symbol?symbol=${symbol}`, { method: 'POST' });
         } catch (e) {
             // Playwright might not be installed, continue
         }
-
-        // Step 2: Fetch calendar
-        message.textContent = 'Fetching calendar...';
-        await fetch('/api/fetch-calendar', { method: 'POST' });
-
-        // Step 3: Fetch news
-        message.textContent = 'Fetching news...';
-        await fetch('/api/fetch-news', { method: 'POST' });
-
-        // Step 4: Generate prompt
-        message.textContent = 'Generating analysis prompt...';
-        await fetch('/api/generate-prompt', { method: 'POST' });
 
         // Success - reload page
         message.textContent = 'Done! Reloading...';

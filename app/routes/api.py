@@ -279,12 +279,43 @@ async def api_import_screenshots(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/clear-screenshots")
+async def api_clear_screenshots(
+    symbols: Optional[str] = None,
+):
+    """
+    Clear old screenshots before capturing new ones.
+    
+    Args:
+        symbols: Comma-separated symbols to clear (default: all)
+    """
+    try:
+        from app.agents.screenshot_service import clear_old_screenshots
+        from app.config import SYMBOLS
+        
+        symbol_list = symbols.split(",") if symbols else SYMBOLS
+        
+        deleted = clear_old_screenshots(symbols=symbol_list)
+        total = sum(deleted.values())
+        
+        return JSONResponse(content={
+            "status": "success",
+            "timestamp": datetime.utcnow().isoformat(),
+            "deleted": total,
+            "by_symbol": deleted
+        })
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/capture-screenshots")
 async def api_capture_screenshots(
     db: Session = Depends(get_db),
     symbols: Optional[str] = None,
     timeframes: Optional[str] = None,
-    headless: bool = True
+    headless: bool = True,
+    clear_old: bool = True
 ):
     """
     Capture TradingView screenshots automatically using Playwright.
@@ -293,6 +324,7 @@ async def api_capture_screenshots(
         symbols: Comma-separated symbols (default: XAUUSD,EURUSD)
         timeframes: Comma-separated timeframes (default: all)
         headless: Run browser headless (default: true)
+        clear_old: Clear old screenshots before capturing (default: true)
     
     Returns:
         List of captured screenshot paths
@@ -308,6 +340,7 @@ async def api_capture_screenshots(
             symbols=symbol_list,
             timeframes=timeframe_list,
             headless=headless,
+            clear_old=clear_old,
         )
         
         total = sum(len(paths) for paths in results.values())
@@ -337,7 +370,8 @@ async def api_capture_symbol(
     db: Session = Depends(get_db),
     symbol: str = "XAUUSD",
     timeframes: Optional[str] = None,
-    headless: bool = True
+    headless: bool = True,
+    clear_old: bool = True
 ):
     """
     Capture TradingView screenshots for a single symbol.
@@ -346,6 +380,7 @@ async def api_capture_symbol(
         symbol: Symbol to capture (e.g., XAUUSD)
         timeframes: Comma-separated timeframes (default: all)
         headless: Run browser headless (default: true)
+        clear_old: Clear old screenshots for this symbol first (default: true)
     """
     try:
         from app.agents.screenshot_service import capture_charts_for_symbol
@@ -357,6 +392,7 @@ async def api_capture_symbol(
             symbol=symbol,
             timeframes=timeframe_list,
             headless=headless,
+            clear_old=clear_old,
         )
         
         # Import captured screenshots to database

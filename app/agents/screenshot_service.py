@@ -7,10 +7,11 @@ Requires: playwright, playwright install chromium
 
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 from typing import List, Optional, Dict
 import logging
+import glob
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,80 @@ SYMBOL_MAP = {
     "GBPUSD": "OANDA:GBPUSD",
     "USDJPY": "OANDA:USDJPY",
 }
+
+
+def clear_old_screenshots(
+    symbols: List[str] = None,
+    output_dir: Path = None,
+) -> Dict[str, int]:
+    """
+    Clear old screenshots before capturing new ones.
+    
+    Args:
+        symbols: List of symbols to clear (default: all configured symbols)
+        output_dir: Screenshots directory (default: data/screenshots)
+        
+    Returns:
+        Dict with count of deleted files per symbol
+    """
+    from app.config import SCREENSHOTS_DIR, SYMBOLS
+    
+    symbols = symbols or SYMBOLS
+    output_dir = output_dir or SCREENSHOTS_DIR
+    
+    deleted = {}
+    
+    for symbol in symbols:
+        # Find all screenshots for this symbol
+        pattern = str(output_dir / f"{symbol}_*.png")
+        files = glob.glob(pattern)
+        
+        deleted[symbol] = 0
+        for f in files:
+            try:
+                os.remove(f)
+                deleted[symbol] += 1
+                logger.info(f"Deleted old screenshot: {f}")
+            except Exception as e:
+                logger.warning(f"Failed to delete {f}: {e}")
+    
+    total = sum(deleted.values())
+    logger.info(f"Cleared {total} old screenshots")
+    
+    return deleted
+
+
+def clear_screenshots_for_symbol(
+    symbol: str,
+    output_dir: Path = None,
+) -> int:
+    """
+    Clear old screenshots for a specific symbol.
+    
+    Args:
+        symbol: Symbol to clear (e.g., "XAUUSD")
+        output_dir: Screenshots directory
+        
+    Returns:
+        Number of deleted files
+    """
+    from app.config import SCREENSHOTS_DIR
+    
+    output_dir = output_dir or SCREENSHOTS_DIR
+    
+    pattern = str(output_dir / f"{symbol}_*.png")
+    files = glob.glob(pattern)
+    
+    deleted = 0
+    for f in files:
+        try:
+            os.remove(f)
+            deleted += 1
+            logger.info(f"Deleted old screenshot: {f}")
+        except Exception as e:
+            logger.warning(f"Failed to delete {f}: {e}")
+    
+    return deleted
 
 
 async def capture_tradingview_screenshot(
@@ -134,6 +209,7 @@ async def capture_all_charts(
     timeframes: List[str] = None,
     output_dir: Path = None,
     headless: bool = True,
+    clear_old: bool = True,
 ) -> Dict[str, List[str]]:
     """
     Capture screenshots for all symbol/timeframe combinations.
@@ -143,6 +219,7 @@ async def capture_all_charts(
         timeframes: List of timeframes (default: all)
         output_dir: Output directory (default: data/screenshots)
         headless: Run browser headless
+        clear_old: Clear old screenshots before capturing (default: True)
         
     Returns:
         Dict mapping symbols to list of screenshot paths
@@ -154,6 +231,10 @@ async def capture_all_charts(
     output_dir = output_dir or SCREENSHOTS_DIR
     
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Clear old screenshots first
+    if clear_old:
+        clear_old_screenshots(symbols=symbols, output_dir=output_dir)
     
     results = {symbol: [] for symbol in symbols}
     
@@ -180,9 +261,17 @@ async def capture_charts_for_symbol(
     timeframes: List[str] = None,
     output_dir: Path = None,
     headless: bool = True,
+    clear_old: bool = True,
 ) -> List[str]:
     """
     Capture all timeframe screenshots for a single symbol.
+    
+    Args:
+        symbol: Symbol to capture
+        timeframes: List of timeframes (default: all)
+        output_dir: Output directory
+        headless: Run browser headless
+        clear_old: Clear old screenshots for this symbol first (default: True)
     """
     from app.config import SCREENSHOTS_DIR, TIMEFRAMES
     
@@ -190,6 +279,10 @@ async def capture_charts_for_symbol(
     output_dir = output_dir or SCREENSHOTS_DIR
     
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Clear old screenshots for this symbol first
+    if clear_old:
+        clear_screenshots_for_symbol(symbol=symbol, output_dir=output_dir)
     
     paths = []
     for timeframe in timeframes:

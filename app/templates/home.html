@@ -32,9 +32,6 @@
             <div id="progressBar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
         </div>
         <div id="progressSteps" class="space-y-1 text-sm text-blue-800">
-            <div id="step-screenshots" class="flex items-center gap-2">
-                <span class="step-icon">⏳</span> Capturing TradingView charts...
-            </div>
             <div id="step-calendar" class="flex items-center gap-2">
                 <span class="step-icon">⏳</span> Fetching economic calendar...
             </div>
@@ -43,6 +40,9 @@
             </div>
             <div id="step-prompt" class="flex items-center gap-2">
                 <span class="step-icon">⏳</span> Generating analysis prompt...
+            </div>
+            <div id="step-screenshots" class="flex items-center gap-2">
+                <span class="step-icon">⏳</span> Capturing TradingView charts (clears old)...
             </div>
         </div>
     </div>
@@ -262,55 +262,55 @@ async function refreshData() {
     }
 
     try {
-        // Step 1: Capture screenshots (optional - may fail if Playwright not installed)
-        updateProgress('screenshots', 'running', 5);
+        // Step 1: Fetch calendar (fast - do first)
+        updateProgress('calendar', 'running', 5);
+        const calRes = await fetch('/api/fetch-calendar', { method: 'POST' });
+        if (calRes.ok) {
+            const data = await calRes.json();
+            results.calendar = data.fetched || 0;
+            updateProgress('calendar', 'done', 25);
+        } else {
+            throw new Error('Calendar fetch failed');
+        }
+
+        // Step 2: Fetch news (fast)
+        updateProgress('news', 'running', 30);
+        const newsRes = await fetch('/api/fetch-news', { method: 'POST' });
+        if (newsRes.ok) {
+            const data = await newsRes.json();
+            results.news = data.fetched || 0;
+            updateProgress('news', 'done', 50);
+        } else {
+            throw new Error('News fetch failed');
+        }
+
+        // Step 3: Generate prompt (fast)
+        updateProgress('prompt', 'running', 55);
+        const promptRes = await fetch('/api/generate-prompt', { method: 'POST' });
+        if (promptRes.ok) {
+            const data = await promptRes.json();
+            results.prompt = data.prompt_path;
+            updateProgress('prompt', 'done', 65);
+        } else {
+            throw new Error('Prompt generation failed');
+        }
+
+        // Step 4: Capture screenshots (slow - do last, clears old ones first)
+        updateProgress('screenshots', 'running', 70);
         try {
             const screenshotRes = await fetch('/api/capture-screenshots', { method: 'POST' });
             if (screenshotRes.ok) {
                 const data = await screenshotRes.json();
                 results.screenshots = data.captured || 0;
-                updateProgress('screenshots', 'done', 25);
+                updateProgress('screenshots', 'done', 100);
             } else if (screenshotRes.status === 503) {
                 // Playwright not installed - skip
                 results.screenshots = 'skipped';
-                updateProgress('screenshots', 'skipped', 25);
+                updateProgress('screenshots', 'skipped', 100);
             }
         } catch (e) {
             results.screenshots = 'skipped';
-            updateProgress('screenshots', 'skipped', 25);
-        }
-
-        // Step 2: Fetch calendar
-        updateProgress('calendar', 'running', 30);
-        const calRes = await fetch('/api/fetch-calendar', { method: 'POST' });
-        if (calRes.ok) {
-            const data = await calRes.json();
-            results.calendar = data.fetched || 0;
-            updateProgress('calendar', 'done', 50);
-        } else {
-            throw new Error('Calendar fetch failed');
-        }
-
-        // Step 3: Fetch news
-        updateProgress('news', 'running', 55);
-        const newsRes = await fetch('/api/fetch-news', { method: 'POST' });
-        if (newsRes.ok) {
-            const data = await newsRes.json();
-            results.news = data.fetched || 0;
-            updateProgress('news', 'done', 75);
-        } else {
-            throw new Error('News fetch failed');
-        }
-
-        // Step 4: Generate prompt
-        updateProgress('prompt', 'running', 80);
-        const promptRes = await fetch('/api/generate-prompt', { method: 'POST' });
-        if (promptRes.ok) {
-            const data = await promptRes.json();
-            results.prompt = data.prompt_path;
-            updateProgress('prompt', 'done', 100);
-        } else {
-            throw new Error('Prompt generation failed');
+            updateProgress('screenshots', 'skipped', 100);
         }
 
         // Success!

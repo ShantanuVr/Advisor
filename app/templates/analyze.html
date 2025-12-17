@@ -223,29 +223,30 @@ async function refreshAndPrepare() {
     }
 
     try {
-        // Step 1: Capture screenshots (optional)
-        updateProgress('Capturing TradingView charts...', 10);
+        // Step 1: Fetch calendar (fast)
+        updateProgress('Fetching economic calendar...', 10);
+        await fetch('/api/fetch-calendar', { method: 'POST' });
+        updateProgress('Calendar updated', 30);
+
+        // Step 2: Fetch news (fast)
+        updateProgress('Fetching Fed/FOMC news...', 35);
+        await fetch('/api/fetch-news', { method: 'POST' });
+        updateProgress('News updated', 55);
+
+        // Step 3: Generate prompt (fast)
+        updateProgress('Generating analysis prompt...', 60);
+        await fetch('/api/generate-prompt', { method: 'POST' });
+        updateProgress('Prompt ready!', 70);
+
+        // Step 4: Capture screenshots (slow - clears old first)
+        updateProgress('Capturing TradingView charts (clearing old)...', 75);
         try {
             await fetch('/api/capture-screenshots', { method: 'POST' });
+            updateProgress('Charts captured!', 100);
         } catch (e) {
             // Playwright might not be installed
+            updateProgress('Charts skipped (Playwright not installed)', 100);
         }
-        updateProgress('Charts captured (or skipped)', 25);
-
-        // Step 2: Fetch calendar
-        updateProgress('Fetching economic calendar...', 30);
-        await fetch('/api/fetch-calendar', { method: 'POST' });
-        updateProgress('Calendar updated', 50);
-
-        // Step 3: Fetch news
-        updateProgress('Fetching Fed/FOMC news...', 55);
-        await fetch('/api/fetch-news', { method: 'POST' });
-        updateProgress('News updated', 75);
-
-        // Step 4: Generate prompt
-        updateProgress('Generating analysis prompt...', 80);
-        await fetch('/api/generate-prompt', { method: 'POST' });
-        updateProgress('Prompt ready!', 100);
 
         // Success - reload page
         await new Promise(r => setTimeout(r, 500));
