@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""CLI entry point for the Personal Advisor Portal."""
+
+import asyncio
+import click
+from datetime import date
+
+# Ensure app module is importable
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))
+
+
+@click.group()
+def cli():
+    """Personal Advisor Portal - Daily trade planning for XAUUSD and EURUSD."""
+    pass
+
+
+@cli.command()
+@click.option('--host', default='127.0.0.1', help='Host to bind to')
+@click.option('--port', default=8000, help='Port to bind to')
+@click.option('--reload', is_flag=True, help='Enable auto-reload')
+def serve(host, port, reload):
+    """Start the portal web server."""
+    import uvicorn
+    uvicorn.run(
+        "app.main:app",
+        host=host,
+        port=port,
+        reload=reload,
+    )
+
+
+@cli.command()
+def prepare():
+    """Run full daily data collection and prompt generation."""
+    from app.database import SessionLocal
+    from app.agents.snapshot_collector import import_screenshots
+    from app.agents.fundamental import fetch_and_store_calendar
+    from app.agents.news_collector import fetch_and_store_news
+    from app.agents.prompt_generator import generate_prompt
+    
+    db = SessionLocal()
+    
+    try:
+        click.echo("📸 Importing screenshots from inbox...")
+        snap_results = import_screenshots(db)
+        click.echo(f"   Imported: {snap_results['imported']}, Failed: {len(snap_results['failed'])}")
+        for fail in snap_results['failed']:
+            click.echo(f"   ⚠️  {fail['file']}: {fail['reason']}")
+        
+        click.echo("\n📅 Fetching economic calendar...")
+        cal_results = asyncio.run(fetch_and_store_calendar(db))
+        click.echo(f"   Fetched: {cal_results['fetched']}, Inserted: {cal_results['inserted']}, Updated: {cal_results['updated']}")
+        
+        click.echo("\n📰 Fetching news...")
+        news_results = asyncio.run(fetch_and_store_news(db))
+        click.echo(f"   Fetched: {news_results['fetched']}, Inserted: {news_results['inserted']}")
+        
+        click.echo("\n📝 Generating analysis prompt...")
+        prompt_path = generate_prompt(db)
+        click.echo(f"   Saved to: {prompt_path}")
+        
+        click.echo("\n✅ Preparation complete!")
+        click.echo("\nNext steps:")
+        click.echo(f"1. Open {prompt_path} in Cursor")
+        click.echo("2. Drag in your TradingView screenshots")
+        click.echo("3. Ask Claude to analyze and provide JSON output")
+        click.echo("4. Paste the response at http://localhost:8000/analyze")
+        
+    finally:
+        db.close()
+
+
+@cli.command('import-snapshots')
+def import_snapshots_cmd():
+    """Import screenshots from the inbox folder."""
+    from app.database import SessionLocal
+    from app.agents.snapshot_collector import import_screenshots
+    
+    db = SessionLocal()
+    try:
+        click.echo("📸 Importing screenshots from inbox...")
+        results = import_screenshots(db)
+        click.echo(f"Imported: {results['imported']}")
+        click.echo(f"Skipped: {results['skipped']}")
+        if results['failed']:
+            click.echo(f"Failed: {len(results['failed'])}")
+            for fail in results['failed']:
+                click.echo(f"  - {fail['file']}: {fail['reason']}")
+    finally:
+        db.close()
+
+
+@cli.command('fetch-calendar')
+def fetch_calendar_cmd():
+    """Fetch ForexFactory economic calendar."""
+    from app.database import SessionLocal
+    from app.agents.fundamental import fetch_and_store_calendar
+    
+    db = SessionLocal()
+    try:
+        click.echo("📅 Fetching economic calendar...")
+        results = asyncio.run(fetch_and_store_calendar(db))
+        click.echo(f"Fetched: {results['fetched']}")
+        click.echo(f"Inserted: {results['inserted']}")
+        click.echo(f"Updated: {results['updated']}")
+        if results['errors']:
+            click.echo("Errors:")
+            for err in results['errors']:
+                click.echo(f"  - {err}")
+    finally:
+        db.close()
+
+
+@cli.command('fetch-news')
+def fetch_news_cmd():
+    """Fetch Fed/FOMC related news."""
+    from app.database import SessionLocal
+    from app.agents.news_collector import fetch_and_store_news
+    
+    db = SessionLocal()
+    try:
+        click.echo("📰 Fetching news...")
+        results = asyncio.run(fetch_and_store_news(db))
+        click.echo(f"Fetched: {results['fetched']}")
+        click.echo(f"Inserted: {results['inserted']}")
+        click.echo(f"Skipped (duplicates): {results['skipped']}")
+        if results['errors']:
+            click.echo("Errors:")
+            for err in results['errors']:
+                click.echo(f"  - {err}")
+    finally:
+        db.close()
+
+
+@cli.command('generate-prompt')
+@click.option('--date', 'target_date', default=None, help='Date in YYYY-MM-DD format (default: today)')
+def generate_prompt_cmd(target_date):
+    """Generate the analysis prompt for Cursor."""
+    from app.database import SessionLocal
+    from app.agents.prompt_generator import generate_prompt
+    
+    if target_date:
+        target_date = date.fromisoformat(target_date)
+    
+    db = SessionLocal()
+    try:
+        click.echo("📝 Generating analysis prompt...")
+        prompt_path = generate_prompt(db, target_date)
+        click.echo(f"Saved to: {prompt_path}")
+        click.echo("\nOpen this file in Cursor and follow the instructions.")
+    finally:
+        db.close()
+
+
+@cli.command('init-db')
+def init_db_cmd():
+    """Initialize the database tables."""
+    from app.database import init_db
+    click.echo("🗄️  Initializing database...")
+    init_db()
+    click.echo("Done!")
+
+
+if __name__ == '__main__':
+    cli()

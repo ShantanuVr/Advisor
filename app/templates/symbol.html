@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+
+{% block title %}{{ symbol }} - Advisor Portal{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">{{ symbol }}</h1>
+            <p class="text-gray-500">{{ today.strftime('%A, %B %d, %Y') }}</p>
+        </div>
+        <a href="/" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
+            ← Back to Overview
+        </a>
+    </div>
+
+    <!-- Trade Plan Card -->
+    {% if report %}
+    {% set data = report.report_json %}
+    <div class="bg-white shadow rounded-lg overflow-hidden">
+        <div class="px-6 py-5">
+            <div class="flex justify-between items-start">
+                <div>
+                    <h2 class="text-xl font-semibold text-gray-900">Trade Plan</h2>
+                    <div class="mt-3">
+                        {% if data.direction == 'long' %}
+                            <span class="inline-flex items-center px-4 py-2 rounded-full text-xl font-bold bg-green-100 text-green-800">
+                                📈 LONG
+                            </span>
+                        {% elif data.direction == 'short' %}
+                            <span class="inline-flex items-center px-4 py-2 rounded-full text-xl font-bold bg-red-100 text-red-800">
+                                📉 SHORT
+                            </span>
+                        {% else %}
+                            <span class="inline-flex items-center px-4 py-2 rounded-full text-xl font-bold bg-gray-100 text-gray-800">
+                                ⏸️ NO TRADE
+                            </span>
+                        {% endif %}
+                        <span class="ml-3 text-lg text-gray-500">
+                            {{ data.confidence|int }}% confidence
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            {% if data.direction != 'no_trade' %}
+            <div class="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <p class="text-sm text-gray-500">Entry</p>
+                    <p class="text-lg font-semibold text-gray-900">
+                        {% if data.entry_zone %}
+                            {{ data.entry_zone.value if data.entry_zone.value else data.entry_zone }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </p>
+                </div>
+                <div class="bg-red-50 rounded-lg p-4">
+                    <p class="text-sm text-red-600">Invalidation</p>
+                    <p class="text-lg font-semibold text-red-700">{{ data.invalidation or '-' }}</p>
+                </div>
+                <div class="bg-green-50 rounded-lg p-4">
+                    <p class="text-sm text-green-600">TP1</p>
+                    <p class="text-lg font-semibold text-green-700">{{ data.tp1 or '-' }}</p>
+                </div>
+                <div class="bg-green-50 rounded-lg p-4">
+                    <p class="text-sm text-green-600">TP2</p>
+                    <p class="text-lg font-semibold text-green-700">{{ data.tp2 or '-' }}</p>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if data.stand_down_conditions %}
+            <div class="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <h3 class="font-semibold text-yellow-800">⚠️ Stand Down Conditions</h3>
+                <ul class="mt-2 space-y-1">
+                    {% for condition in data.stand_down_conditions %}
+                    <li class="text-sm text-yellow-700">• {{ condition }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            {% if data.supporting_evidence %}
+            <div class="mt-6">
+                <h3 class="font-semibold text-gray-900">Supporting Evidence</h3>
+                <ul class="mt-2 space-y-1">
+                    {% for evidence in data.supporting_evidence %}
+                    <li class="text-sm text-gray-600">• {{ evidence }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            {% if data.missing_data %}
+            <div class="mt-4 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                <p class="text-sm text-orange-700">
+                    <strong>Missing Data:</strong> {{ data.missing_data|join(', ') }}
+                </p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% else %}
+    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
+        <p class="text-yellow-800">No trade plan generated yet. Run analysis first.</p>
+        <a href="/analyze" class="mt-2 inline-block text-indigo-600 hover:text-indigo-800 font-medium">
+            Go to Analysis →
+        </a>
+    </div>
+    {% endif %}
+
+    <!-- Key Levels -->
+    {% if report and report.report_json.levels %}
+    {% set levels = report.report_json.levels %}
+    <div class="bg-white shadow rounded-lg overflow-hidden">
+        <div class="px-6 py-5">
+            <h2 class="text-xl font-semibold text-gray-900 mb-4">Key Levels</h2>
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                {% if levels.pdh %}
+                <div class="text-center p-3 bg-gray-50 rounded">
+                    <p class="text-xs text-gray-500">PDH</p>
+                    <p class="font-mono font-semibold">{{ levels.pdh }}</p>
+                </div>
+                {% endif %}
+                {% if levels.pdl %}
+                <div class="text-center p-3 bg-gray-50 rounded">
+                    <p class="text-xs text-gray-500">PDL</p>
+                    <p class="font-mono font-semibold">{{ levels.pdl }}</p>
+                </div>
+                {% endif %}
+                {% if levels.pwh %}
+                <div class="text-center p-3 bg-gray-50 rounded">
+                    <p class="text-xs text-gray-500">PWH</p>
+                    <p class="font-mono font-semibold">{{ levels.pwh }}</p>
+                </div>
+                {% endif %}
+                {% if levels.pwl %}
+                <div class="text-center p-3 bg-gray-50 rounded">
+                    <p class="text-xs text-gray-500">PWL</p>
+                    <p class="font-mono font-semibold">{{ levels.pwl }}</p>
+                </div>
+                {% endif %}
+                {% if levels.key_support %}
+                <div class="text-center p-3 bg-green-50 rounded">
+                    <p class="text-xs text-green-600">Support</p>
+                    <p class="font-mono font-semibold text-green-700">{{ levels.key_support }}</p>
+                </div>
+                {% endif %}
+                {% if levels.key_resistance %}
+                <div class="text-center p-3 bg-red-50 rounded">
+                    <p class="text-xs text-red-600">Resistance</p>
+                    <p class="font-mono font-semibold text-red-700">{{ levels.key_resistance }}</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- ICT Notes -->
+    {% if report and report.report_json.ict_notes %}
+    <div class="bg-white shadow rounded-lg overflow-hidden">
+        <div class="px-6 py-5">
+            <h2 class="text-xl font-semibold text-gray-900 mb-4">ICT Analysis Notes</h2>
+            <div class="prose prose-sm max-w-none text-gray-700">
+                {{ report.report_json.ict_notes|safe }}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Turtle Soup -->
+    {% if report and report.report_json.turtle_soup and report.report_json.turtle_soup.detected %}
+    {% set ts = report.report_json.turtle_soup %}
+    <div class="bg-white shadow rounded-lg overflow-hidden border-l-4 border-indigo-500">
+        <div class="px-6 py-5">
+            <h2 class="text-xl font-semibold text-gray-900 mb-4">🐢 Turtle Soup Signal</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div>
+                    <p class="text-sm text-gray-500">Direction</p>
+                    <p class="font-semibold text-lg {% if ts.direction == 'long' %}text-green-600{% else %}text-red-600{% endif %}">
+                        {{ ts.direction|upper if ts.direction else '-' }}
+                    </p>
+                </div>
+                <div>
+                    <p class="text-sm text-gray-500">Entry</p>
+                    <p class="font-mono font-semibold">{{ ts.entry or '-' }}</p>
+                </div>
+                <div>
+                    <p class="text-sm text-gray-500">Invalidation</p>
+                    <p class="font-mono font-semibold text-red-600">{{ ts.invalidation or '-' }}</p>
+                </div>
+                <div>
+                    <p class="text-sm text-gray-500">TP1 / TP2</p>
+                    <p class="font-mono font-semibold text-green-600">{{ ts.tp1 or '-' }} / {{ ts.tp2 or '-' }}</p>
+                </div>
+            </div>
+            {% if ts.description %}
+            <p class="text-sm text-gray-600 bg-gray-50 p-3 rounded">{{ ts.description }}</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Screenshots Gallery -->
+    <div class="bg-white shadow rounded-lg overflow-hidden">
+        <div class="px-6 py-5">
+            <h2 class="text-xl font-semibold text-gray-900 mb-4">Chart Screenshots</h2>
+            
+            {% if screenshots %}
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                {% for tf in timeframes %}
+                <div class="text-center">
+                    <p class="text-sm font-medium text-gray-700 mb-2">{{ tf }}</p>
+                    {% if screenshots_by_tf[tf] %}
+                    <a href="/screenshots/{{ screenshots_by_tf[tf].file_path.split('/')[-1] }}" target="_blank" class="block">
+                        <img src="/screenshots/{{ screenshots_by_tf[tf].file_path.split('/')[-1] }}" 
+                             alt="{{ symbol }} {{ tf }}"
+                             class="w-full h-24 object-cover rounded border hover:border-indigo-500 transition-colors">
+                    </a>
+                    {% else %}
+                    <div class="w-full h-24 bg-gray-100 rounded border-2 border-dashed border-gray-300 flex items-center justify-center">
+                        <span class="text-gray-400 text-xs">Missing</span>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-gray-500">No screenshots found for today. Drop images in <code class="bg-gray-100 px-1 rounded">/data/inbox/</code></p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

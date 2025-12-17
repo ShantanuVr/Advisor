@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Advisor Portal{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Daily Overview</h1>
+            <p class="text-gray-500">{{ today.strftime('%A, %B %d, %Y') }}</p>
+        </div>
+        <a href="/analyze" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
+            ⚡ Run Analysis
+        </a>
+    </div>
+
+    <!-- Workflow Status -->
+    <div class="bg-white shadow rounded-lg p-4">
+        <h2 class="text-lg font-medium text-gray-900 mb-3">Today's Workflow</h2>
+        <div class="flex flex-wrap gap-3">
+            <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if workflow_status.screenshots_collected %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-600{% endif %}">
+                {% if workflow_status.screenshots_collected %}✅{% else %}⬜{% endif %} Screenshots
+            </span>
+            <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if workflow_status.calendar_fetched %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-600{% endif %}">
+                {% if workflow_status.calendar_fetched %}✅{% else %}⬜{% endif %} Calendar
+            </span>
+            <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if workflow_status.analysis_complete %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-600{% endif %}">
+                {% if workflow_status.analysis_complete %}✅{% else %}⬜{% endif %} Analysis
+            </span>
+            <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if workflow_status.report_generated %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-600{% endif %}">
+                {% if workflow_status.report_generated %}✅{% else %}⬜{% endif %} Report
+            </span>
+        </div>
+    </div>
+
+    <!-- Symbol Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {% for symbol in symbols %}
+        <div class="bg-white shadow rounded-lg overflow-hidden">
+            <div class="px-4 py-5 sm:p-6">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-900">{{ symbol }}</h3>
+                        {% if reports[symbol] %}
+                            {% set report = reports[symbol].report_json %}
+                            <div class="mt-2">
+                                {% if report.direction == 'long' %}
+                                    <span class="inline-flex items-center px-3 py-1 rounded-full text-lg font-bold bg-green-100 text-green-800">
+                                        📈 LONG
+                                    </span>
+                                {% elif report.direction == 'short' %}
+                                    <span class="inline-flex items-center px-3 py-1 rounded-full text-lg font-bold bg-red-100 text-red-800">
+                                        📉 SHORT
+                                    </span>
+                                {% else %}
+                                    <span class="inline-flex items-center px-3 py-1 rounded-full text-lg font-bold bg-gray-100 text-gray-800">
+                                        ⏸️ NO TRADE
+                                    </span>
+                                {% endif %}
+                                <span class="ml-2 text-sm text-gray-500">
+                                    {{ report.confidence|int }}% confidence
+                                </span>
+                            </div>
+                            {% if report.entry_zone %}
+                            <div class="mt-3 text-sm text-gray-600">
+                                <p><strong>Entry:</strong> {{ report.entry_zone.value if report.entry_zone.value else report.entry_zone }}</p>
+                                {% if report.invalidation %}<p><strong>Stop:</strong> {{ report.invalidation }}</p>{% endif %}
+                                {% if report.tp1 %}<p><strong>TP1:</strong> {{ report.tp1 }}</p>{% endif %}
+                            </div>
+                            {% endif %}
+                        {% else %}
+                            <p class="mt-2 text-gray-500">No analysis yet</p>
+                        {% endif %}
+                    </div>
+                    <a href="/symbol/{{ symbol }}" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
+                        View Details →
+                    </a>
+                </div>
+
+                {% if reports[symbol] and reports[symbol].report_json.stand_down_conditions %}
+                <div class="mt-4 p-3 bg-yellow-50 rounded-md">
+                    <p class="text-sm font-medium text-yellow-800">⚠️ Stand Down Conditions:</p>
+                    <ul class="mt-1 text-sm text-yellow-700">
+                        {% for condition in reports[symbol].report_json.stand_down_conditions[:2] %}
+                        <li>• {{ condition }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Today's High Impact Events -->
+    {% if high_impact_events %}
+    <div class="bg-white shadow rounded-lg overflow-hidden">
+        <div class="px-4 py-5 sm:p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">⚠️ Today's High Impact Events</h3>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead>
+                        <tr>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Time (UTC)</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Currency</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Event</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Forecast</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Previous</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200">
+                        {% for event in high_impact_events %}
+                        <tr>
+                            <td class="px-4 py-2 text-sm font-medium text-gray-900">{{ event.event_time_utc.strftime('%H:%M') }}</td>
+                            <td class="px-4 py-2 text-sm">
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {% if event.currency == 'USD' %}bg-blue-100 text-blue-800{% else %}bg-purple-100 text-purple-800{% endif %}">
+                                    {{ event.currency }}
+                                </span>
+                            </td>
+                            <td class="px-4 py-2 text-sm text-gray-900">{{ event.title }}</td>
+                            <td class="px-4 py-2 text-sm text-gray-500">{{ event.forecast or '-' }}</td>
+                            <td class="px-4 py-2 text-sm text-gray-500">{{ event.previous or '-' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Quick Start Guide (show if no reports) -->
+    {% if not reports.XAUUSD and not reports.EURUSD %}
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-6">
+        <h3 class="text-lg font-semibold text-blue-900 mb-3">🚀 Quick Start</h3>
+        <ol class="list-decimal list-inside space-y-2 text-blue-800">
+            <li>Take TradingView screenshots and drop them in <code class="bg-blue-100 px-1 rounded">/data/inbox/</code></li>
+            <li>Run <code class="bg-blue-100 px-1 rounded">make prepare</code> to collect all data</li>
+            <li>Go to <a href="/analyze" class="underline font-medium">Analyze</a> and follow the Cursor workflow</li>
+            <li>Paste your analysis and view the trade plan</li>
+        </ol>
+        <p class="mt-3 text-sm text-blue-600">
+            Filename format: <code class="bg-blue-100 px-1 rounded">XAUUSD_1H_2024-12-17.png</code>
+        </p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

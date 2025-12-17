@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+
+{% block title %}Analysis Workflow - Advisor Portal{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">⚡ Analysis Workflow</h1>
+        <p class="text-gray-500">{{ today.strftime('%A, %B %d, %Y') }}</p>
+    </div>
+
+    <!-- Status Messages -->
+    {% if error %}
+    <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+        <p class="text-red-800">❌ {{ error }}</p>
+    </div>
+    {% endif %}
+    
+    {% if success %}
+    <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+        <p class="text-green-800">✅ {{ success }}</p>
+        <a href="/" class="mt-2 inline-block text-green-700 underline font-medium">View your trade plans →</a>
+    </div>
+    {% endif %}
+
+    <!-- Status Badges -->
+    <div class="bg-white shadow rounded-lg p-4">
+        <h2 class="font-medium text-gray-900 mb-3">Today's Status</h2>
+        <div class="flex flex-wrap gap-3">
+            <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if prompt_exists %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-600{% endif %}">
+                {% if prompt_exists %}✅{% else %}⬜{% endif %} Prompt Generated
+            </span>
+            <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if existing_signals > 0 %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-600{% endif %}">
+                {% if existing_signals > 0 %}✅{% else %}⬜{% endif %} Analysis Submitted ({{ existing_signals }} signals)
+            </span>
+            <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if existing_reports > 0 %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-600{% endif %}">
+                {% if existing_reports > 0 %}✅{% else %}⬜{% endif %} Reports Ready ({{ existing_reports }})
+            </span>
+        </div>
+    </div>
+
+    <!-- Step 1: Prompt -->
+    <div class="bg-white shadow rounded-lg overflow-hidden">
+        <div class="px-6 py-4 bg-gray-50 border-b">
+            <h2 class="text-lg font-semibold text-gray-900">Step 1: Open Prompt in Cursor</h2>
+        </div>
+        <div class="p-6">
+            {% if prompt_exists %}
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">Prompt File Path</label>
+                <div class="flex items-center space-x-2">
+                    <code class="flex-1 bg-gray-100 px-3 py-2 rounded text-sm font-mono">{{ prompt_path }}</code>
+                    <button onclick="navigator.clipboard.writeText('{{ prompt_path }}')" 
+                            class="px-3 py-2 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700">
+                        Copy
+                    </button>
+                </div>
+            </div>
+            
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <p class="text-sm text-blue-800">
+                    <strong>Instructions:</strong>
+                </p>
+                <ol class="list-decimal list-inside mt-2 text-sm text-blue-700 space-y-1">
+                    <li>Open the prompt file in Cursor IDE</li>
+                    <li>Drag your TradingView screenshots into the chat</li>
+                    <li>Ask Claude: "Analyze these charts and provide the JSON output"</li>
+                    <li>Copy the JSON response and paste below</li>
+                </ol>
+            </div>
+            
+            <!-- Collapsible Prompt Preview -->
+            <details class="border rounded-lg">
+                <summary class="px-4 py-2 bg-gray-50 cursor-pointer text-sm font-medium text-gray-700 hover:bg-gray-100">
+                    Preview Prompt Content
+                </summary>
+                <div class="p-4 max-h-96 overflow-y-auto">
+                    <pre class="text-xs text-gray-600 whitespace-pre-wrap">{{ prompt_content }}</pre>
+                </div>
+            </details>
+            {% else %}
+            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <p class="text-yellow-800">
+                    ⚠️ No prompt file found for today. Run <code class="bg-yellow-100 px-1 rounded">make prepare</code> first.
+                </p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Step 2: Submit Response -->
+    <div class="bg-white shadow rounded-lg overflow-hidden">
+        <div class="px-6 py-4 bg-gray-50 border-b">
+            <h2 class="text-lg font-semibold text-gray-900">Step 2: Paste Cursor's Response</h2>
+        </div>
+        <div class="p-6">
+            <form method="POST" action="/analyze">
+                <div class="mb-4">
+                    <label for="response_json" class="block text-sm font-medium text-gray-700 mb-2">
+                        JSON Response from Cursor
+                    </label>
+                    <textarea 
+                        id="response_json" 
+                        name="response_json" 
+                        rows="15"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 font-mono text-sm"
+                        placeholder='Paste the JSON response here...
+
+{
+  "signals": {
+    "XAUUSD": {
+      "bias": "bullish",
+      "confidence": 75,
+      ...
+    },
+    "EURUSD": {
+      ...
+    }
+  }
+}'></textarea>
+                </div>
+                
+                <div class="flex items-center justify-between">
+                    <p class="text-sm text-gray-500">
+                        The response should be valid JSON matching the expected schema.
+                    </p>
+                    <button type="submit" 
+                            class="px-6 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        Parse & Generate Reports
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Expected Format Reference -->
+    <div class="bg-white shadow rounded-lg overflow-hidden">
+        <div class="px-6 py-4 bg-gray-50 border-b">
+            <h2 class="text-lg font-semibold text-gray-900">Expected JSON Format</h2>
+        </div>
+        <div class="p-6">
+            <pre class="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto text-sm"><code>{
+  "signals": {
+    "XAUUSD": {
+      "bias": "bullish | bearish | neutral",
+      "confidence": 75,
+      "levels": {
+        "pdh": 2650.00,
+        "pdl": 2620.00,
+        "pwh": 2680.00,
+        "pwl": 2580.00,
+        "key_support": 2615.00,
+        "key_resistance": 2660.00
+      },
+      "ict_notes": "Liquidity swept below PDL...",
+      "turtle_soup": {
+        "detected": true,
+        "direction": "long",
+        "entry": 2625.00,
+        "invalidation": 2615.00,
+        "tp1": 2650.00,
+        "tp2": 2680.00,
+        "description": "Sweep of PDL followed by MSS..."
+      },
+      "trade_plan": {
+        "direction": "long | short | no_trade",
+        "entry_zone": {"low": 2620.00, "high": 2630.00},
+        "invalidation": 2610.00,
+        "tp1": 2650.00,
+        "tp2": 2680.00,
+        "stand_down_if": ["NFP in next 2 hours"]
+      }
+    },
+    "EURUSD": { ... }
+  },
+  "market_context": "Overall sentiment summary",
+  "news_impact": "How news affects the bias"
+}</code></pre>
+        </div>
+    </div>
+</div>
+{% endblock %}
