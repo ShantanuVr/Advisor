@@ -157,6 +157,7 @@ def process_symbol_response(symbol: str, data: dict) -> bool:
             levels_json=data.get("levels"),
             ict_notes=data.get("ict_notes"),
             turtle_soup_json=data.get("turtle_soup"),
+            trade_plan_json=data.get("trade_plan"),
         )
         db.add(ta_signal)
         db.commit()
@@ -360,3 +361,5 @@ if __name__ == "__main__":
         print(f"\nReceived: {json.dumps(result, indent=2)[:500]}...")
     else:
         print("\nNo response received")
+
+

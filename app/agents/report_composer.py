@@ -46,8 +46,9 @@ def compose_report(db: Session, target_date: date, symbol: str) -> Optional[Dail
         Snapshot.timeframe.in_(["1H", "4H", "1D"])
     ).first()
     
-    # Parse turtle soup data
+    # Parse data
     turtle_soup = ta_signal.turtle_soup_json or {}
+    trade_plan = ta_signal.trade_plan_json or {}
     levels = ta_signal.levels_json or {}
     
     # Build report
@@ -67,8 +68,27 @@ def compose_report(db: Session, target_date: date, symbol: str) -> Optional[Dail
         "turtle_soup": turtle_soup,
     }
     
-    # Determine direction from bias and turtle soup
-    if turtle_soup.get("detected"):
+    # Prioritize trade_plan.direction (main trade plan) over turtle_soup (counter-trend scalp)
+    if trade_plan.get("direction") and trade_plan.get("direction") != "no_trade":
+        tp_direction = trade_plan.get("direction", "").lower()
+        if tp_direction in ["long", "short"]:
+            report_data["direction"] = tp_direction
+            report_data["entry_zone"] = trade_plan.get("entry_zone")
+            report_data["invalidation"] = trade_plan.get("invalidation")
+            report_data["tp1"] = trade_plan.get("tp1")
+            report_data["tp2"] = trade_plan.get("tp2")
+            report_data["stand_down_conditions"] = trade_plan.get("stand_down_if", [])
+            report_data["supporting_evidence"].append(
+                f"Trade plan: {tp_direction.upper()} bias with {ta_signal.confidence}% confidence"
+            )
+            # Add turtle soup as context if detected
+            if turtle_soup.get("detected"):
+                ts_direction = turtle_soup.get("direction", "").lower()
+                report_data["supporting_evidence"].append(
+                    f"Turtle Soup {ts_direction} setup also detected (counter-trend scalp): {turtle_soup.get('description', 'N/A')[:100]}..."
+                )
+    elif turtle_soup.get("detected"):
+        # Fall back to turtle soup if no trade plan
         ts_direction = turtle_soup.get("direction", "").lower()
         if ts_direction in ["long", "short"]:
             report_data["direction"] = ts_direction

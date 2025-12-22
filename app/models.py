@@ -73,6 +73,7 @@ class TASignal(Base):
     levels_json = Column(JSON, nullable=True)  # {pdh, pdl, pwh, pwl, session_high, session_low}
     ict_notes = Column(Text, nullable=True)  # Freeform ICT analysis notes
     turtle_soup_json = Column(JSON, nullable=True)  # {detected, entry, invalidation, description}
+    trade_plan_json = Column(JSON, nullable=True)  # {direction, entry_zone, invalidation, tp1, tp2, stand_down_if}
     created_at = Column(DateTime, default=datetime.utcnow)
 
     def __repr__(self):
